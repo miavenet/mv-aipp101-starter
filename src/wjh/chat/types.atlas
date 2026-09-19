@@ -37,6 +37,11 @@ default_value=false
 description=bool; ==, bool
 default_value=false
 
+# Whether to execute bash tool calls without confirmation
+[class YoloMode]
+description=bool; ==, bool
+default_value=false
+
 # Program name for help text and usage messages
 [class ProgramName]
 description=std::string; <=>

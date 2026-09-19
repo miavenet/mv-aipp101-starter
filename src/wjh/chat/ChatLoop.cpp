@@ -280,7 +280,8 @@ run(int argc, char * argv[])
             .model = config.model,
             .max_tokens = config.max_tokens,
             .system_prompt = config.system_prompt,
-            .temperature = config.temperature});
+            .temperature = config.temperature,
+            .yolo_mode = config.yolo_mode});
 
     return run(config, std::move(client), std::cin, std::cout);
 }

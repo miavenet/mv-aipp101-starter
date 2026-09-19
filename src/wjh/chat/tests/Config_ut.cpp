@@ -95,7 +95,8 @@ make_test_config()
         .max_tokens = MaxTokens{1024u},
         .system_prompt = std::nullopt,
         .temperature = std::nullopt,
-        .show_config = ShowConfig{false}};
+        .show_config = ShowConfig{false},
+        .yolo_mode = YoloMode{false}};
 }
 
 TEST_SUITE("Config")
@@ -187,6 +188,17 @@ TEST_SUITE("Config")
 
         REQUIRE(result.has_value());
         CHECK(result->show_config == ShowConfig{true});
+    }
+
+    TEST_CASE("resolve_config: yolo_mode flows from args")
+    {
+        EnvGuard guard("OPENROUTER_API_KEY", "sk-test");
+        CommandLineArgs args;
+        args.yolo_mode = YoloMode{true};
+        auto result = resolve_config(args);
+
+        REQUIRE(result.has_value());
+        CHECK(result->yolo_mode == YoloMode{true});
     }
 
     TEST_CASE("resolve_config: invalid MAX_TOKENS")

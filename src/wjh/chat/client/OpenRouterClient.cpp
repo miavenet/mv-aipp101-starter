@@ -135,16 +135,22 @@ nlohmann::json make_tools_json()
             write_file_tool, edit_file_tool};
 }
 
-std::string execute_bash(std::string const & command)
+std::string execute_bash(
+    std::string const & command,
+    wjh::chat::YoloMode yolo_mode)
 {
-    std::cerr << "\n[tool] bash: " << command
-              << "\n[y/n]> " << std::flush;
-    std::string answer;
-    std::getline(std::cin, answer);
-    if (answer.empty()
-        or (answer[0] != 'y' and answer[0] != 'Y'))
-    {
-        return "Command skipped by user";
+    std::cerr << "\n[tool] bash: " << command;
+    if (yolo_mode) {
+        std::cerr << std::endl;
+    } else {
+        std::cerr << "\n[y/n]> " << std::flush;
+        std::string answer;
+        std::getline(std::cin, answer);
+        if (answer.empty()
+            or (answer[0] != 'y' and answer[0] != 'Y'))
+        {
+            return "Command skipped by user";
+        }
     }
 
     std::string full_cmd = command + " 2>&1";
@@ -352,11 +358,13 @@ std::string execute_edit_file(
 
 std::string dispatch_tool(
     std::string const & name,
-    nlohmann::json const & args)
+    nlohmann::json const & args,
+    wjh::chat::YoloMode yolo_mode)
 {
     if (name == "bash") {
         return execute_bash(
-            args["command"].get<std::string>());
+            args["command"].get<std::string>(),
+            yolo_mode);
     }
     if (name == "read_file") {
         return execute_read_file(args);
@@ -611,7 +619,8 @@ do_send_message(
                         .get<std::string>());
 
                 auto output =
-                    dispatch_tool(name, args);
+                    dispatch_tool(
+                        name, args, config_.yolo_mode);
                 std::cerr << output << std::endl;
 
                 messages.push_back(

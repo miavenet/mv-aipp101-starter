@@ -29,6 +29,7 @@ struct CommandLineArgs
     std::optional<MaxTokens> max_tokens;
     std::optional<Temperature> temperature;
     ShowConfig show_config;
+    YoloMode yolo_mode;
     ShowHelp help;
 };
 
@@ -41,6 +42,7 @@ struct CommandLineArgs
  *   -t, --max-tokens <n>      Max response tokens
  *   --temperature <value>      LLM temperature (0.0-2.0)
  *   --show-config              Display resolved config and exit
+ *   --yolo                     Run bash tool calls without confirmation
  *   -h, --help                 Show help
  */
 [[nodiscard]]

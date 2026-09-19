@@ -70,7 +70,8 @@ resolve_config(CommandLineArgs const & args)
         .max_tokens = MaxTokens{4096u},
         .system_prompt = std::nullopt,
         .temperature = std::nullopt,
-        .show_config = args.show_config};
+        .show_config = args.show_config,
+        .yolo_mode = args.yolo_mode};
 
     // Resolve API key (required)
     if (auto env = get_env("OPENROUTER_API_KEY")) {
@@ -133,6 +134,9 @@ print_config(Config const & config, std::ostream & out)
         << "  API key:    " << config.api_key.substr(0u, 12u) << "...\n";
     if (config.temperature) {
         out << "  Temperature: " << *config.temperature << "\n";
+    }
+    if (config.yolo_mode) {
+        out << "  Yolo mode:  on\n";
     }
     if (config.system_prompt) {
         out << "  System:     " << *config.system_prompt << "\n";

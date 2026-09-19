@@ -25,7 +25,8 @@ makeTestConfig()
         .max_tokens = MaxTokens{4096u},
         .system_prompt = std::nullopt,
         .temperature = std::nullopt,
-        .show_config = ShowConfig{false}};
+        .show_config = ShowConfig{false},
+        .yolo_mode = YoloMode{false}};
 }
 
 TEST_SUITE("ChatLoop")

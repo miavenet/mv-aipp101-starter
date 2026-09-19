@@ -24,7 +24,8 @@ makeTestConfig()
         .model = ModelId("openai/gpt-4"),
         .max_tokens = MaxTokens(4096u),
         .system_prompt = SystemPrompt{"Test system prompt"},
-        .temperature = std::nullopt};
+        .temperature = std::nullopt,
+        .yolo_mode = YoloMode{false}};
 }
 
 TEST_SUITE("OpenRouterClient")
@@ -44,7 +45,8 @@ TEST_SUITE("OpenRouterClient")
                 .model = ModelId("meta-llama/llama-3-70b-instruct"),
                 .max_tokens = MaxTokens(2048u),
                 .system_prompt = std::nullopt,
-                .temperature = std::nullopt};
+                .temperature = std::nullopt,
+        .yolo_mode = YoloMode{false}};
 
             OpenRouterClient client(std::move(config));
             CHECK(client.model() == ModelId("meta-llama/llama-3-70b-instruct"));
@@ -56,7 +58,8 @@ TEST_SUITE("OpenRouterClient")
                 .model = ModelId("openai/gpt-4"),
                 .max_tokens = MaxTokens(4096u),
                 .system_prompt = std::nullopt,
-                .temperature = Temperature{0.7f}};
+                .temperature = Temperature{0.7f},
+                .yolo_mode = YoloMode{false}};
 
             OpenRouterClient client(std::move(config));
             CHECK(client.model() == ModelId("openai/gpt-4"));

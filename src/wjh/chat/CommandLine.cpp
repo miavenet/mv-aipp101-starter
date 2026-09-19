@@ -30,6 +30,11 @@ parse_args(std::span<char const * const> args)
             continue;
         }
 
+        if (arg == "--yolo") {
+            result.yolo_mode = YoloMode{true};
+            continue;
+        }
+
         if (arg == "-m" or arg == "--model") {
             if (i + 1 >= args.size()) {
                 return make_error("Missing argument for {}", arg);
@@ -100,6 +105,7 @@ Options:
   -t, --max-tokens <n>        Max response tokens (default: 4096)
   --temperature <value>       LLM temperature (0.0-2.0)
   --show-config               Display resolved config and exit
+  --yolo                      Run bash tool calls without confirmation
   -h, --help                  Show this help message
 
 Environment variables:

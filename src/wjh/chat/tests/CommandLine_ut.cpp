@@ -25,6 +25,7 @@ TEST_SUITE("CommandLine")
         CHECK_FALSE(result->max_tokens.has_value());
         CHECK_FALSE(result->temperature.has_value());
         CHECK(result->show_config == ShowConfig{false});
+        CHECK(result->yolo_mode == YoloMode{false});
         CHECK(result->help == ShowHelp{false});
     }
 
@@ -95,6 +96,15 @@ TEST_SUITE("CommandLine")
 
         REQUIRE(result.has_value());
         CHECK(result->show_config == ShowConfig{true});
+    }
+
+    TEST_CASE("Yolo flag")
+    {
+        char const * args[] = {"chat_app", "--yolo"};
+        auto result = parse_args(args);
+
+        REQUIRE(result.has_value());
+        CHECK(result->yolo_mode == YoloMode{true});
     }
 
     TEST_CASE("Multiple flags")

@@ -28,6 +28,7 @@ struct OpenRouterClientConfig
     MaxTokens max_tokens;
     std::optional<SystemPrompt> system_prompt;
     std::optional<Temperature> temperature;
+    YoloMode yolo_mode;
 };
 
 /**

@@ -80,6 +80,7 @@ are pinned, including the instructor's doctest and RapidCheck forks. Set
 -s, --system-prompt <text>  System prompt
 -t, --max-tokens <n>        Max response tokens (default: 4096)
 --show-config               Display resolved config and exit
+--yolo                      Run bash tool calls without confirmation
 -h, --help                  Show help
 ```
 

@@ -28,6 +28,7 @@ struct Config
     std::optional<SystemPrompt> system_prompt;
     std::optional<Temperature> temperature;
     ShowConfig show_config;
+    YoloMode yolo_mode;
 };
 
 /**

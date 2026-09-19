@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Log every Claude Code hook invocation, for experimenting with hooks.
 
-Registered for every hook event in .claude/settings.local.json. Each call
+Registered for every hook event in .claude/settings.json. Each call
 appends one JSON record to .claude/hook-logs/hooks.jsonl and one readable
 line to .claude/hook-logs/hooks.log (so `tail -f hooks.log` works live).
 

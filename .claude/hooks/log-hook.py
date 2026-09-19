@@ -18,6 +18,13 @@ Derived timings (tracked per session_id):
                         that follows a compaction or resume)
   compactions           completed compactions so far in the session
 
+Session scorecard (shadow mode, research/session_evaluation/DECISION.md phase
+1): on PreCompact and SessionEnd the record gets a "scorecard" block computed
+from this session's earlier records, also appended to
+hook-logs/sessions/<session_id>/scorecards.jsonl. It only observes: cheap
+no-progress signals and which starter thresholds they cross. Nothing is shown
+to the user or the model, and compaction is never blocked.
+
 Status line data: hooks don't receive context/cost/rate-limit info, but the
 status line does. ~/.claude/statusline-command.sh saves its latest input to
 hook-logs/sessions/<session_id>/statusline.json; each record gets a compact
@@ -44,6 +51,7 @@ Usage outside hooks:
   log-hook.py --summary      calls per event, tool timings, log size
   log-hook.py --tail [N]     last N readable lines (default 20)
   log-hook.py --show SEQ     full pretty-printed JSON record for call #SEQ
+  log-hook.py --scorecard [SESSION_ID]   scorecard now (default: latest session)
   log-hook.py --reset        delete logs and state
 """
 
@@ -199,6 +207,78 @@ def statusline_info(sid, s):
     return info
 
 
+# Starter thresholds, taken from shipped stuck detectors (OpenHands, Gemini CLI,
+# Cline) and the "second compaction means handoff" rule. Uncalibrated: shadow mode
+# exists to find out whether they separate good sessions from bad ones.
+SCORE_LIMITS = {"identical_call_streak": 4, "same_failure_streak": 3, "compactions": 2}
+SCORE_EVENTS = ("PreCompact", "SessionEnd")
+
+
+def scorecard(sid):
+    """Cheap no-progress signals for one session, from its main-agent records."""
+    calls, fails, edits, prompts, compactions = [], 0, {}, 0, 0
+    streak = best = fail_streak = best_fail = 0
+    last_call = last_fail = None
+    pending = {}
+    cost = cost_at_compact = None
+    needle = '"session_id":"%s"' % sid
+    try:
+        f = open(JSONL)
+    except OSError:
+        return None
+    with f:
+        for line in f:
+            if needle not in line:
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            ev, pay = r.get("event"), r.get("payload") or {}
+            if "cost_usd" in (r.get("statusline") or {}):
+                cost = r["statusline"]["cost_usd"]
+            if ev == "PostCompact":
+                compactions, cost_at_compact = compactions + 1, cost
+            if r.get("agent_id"):
+                continue  # subagents repeat work by design
+            if ev == "UserPromptSubmit":
+                prompts += 1
+            elif ev == "PreToolUse":
+                key = json.dumps([pay.get("tool_name"), pay.get("tool_input")], sort_keys=True, default=str)
+                pending[r.get("tool_use_id")] = key
+                calls.append(key)
+                streak = streak + 1 if key == last_call else 1
+                best, last_call = max(best, streak), key
+                path = (pay.get("tool_input") or {}).get("file_path")
+                if pay.get("tool_name") in ("Edit", "Write", "NotebookEdit") and path:
+                    edits[path] = edits.get(path, 0) + 1
+            elif ev == "PostToolUseFailure":
+                fails += 1
+                key = pending.get(r.get("tool_use_id"))
+                fail_streak = fail_streak + 1 if key is not None and key == last_fail else 1
+                best_fail, last_fail = max(best_fail, fail_streak), key
+            elif ev == "PostToolUse":
+                last_fail, fail_streak = None, 0
+    n = len(calls)
+    # A-B-A-B with nothing else in between, anywhere in the session.
+    alternation = any(calls[i] == calls[i + 2] == calls[i + 4] and calls[i + 1] == calls[i + 3] == calls[i + 5]
+                      and calls[i] != calls[i + 1] for i in range(n - 5))
+    card = {
+        "tool_calls": n, "tool_failures": fails, "failure_rate": round(fails / n, 3) if n else 0.0,
+        "identical_call_streak": best, "same_failure_streak": best_fail, "alternation_6": alternation,
+        "user_prompts": prompts, "compactions": compactions,
+        "max_edits_one_file": max(edits.values(), default=0), "files_edited": len(edits),
+    }
+    if cost is not None:
+        card["cost_usd"] = cost
+        if cost_at_compact is not None:
+            card["cost_since_compaction_usd"] = round(cost - cost_at_compact, 4)
+    flags = [k for k, limit in SCORE_LIMITS.items() if card[k] >= limit] + (["alternation_6"] if alternation else [])
+    card["flags"] = flags
+    card["level"] = "green" if not flags else "amber" if len(flags) == 1 else "red"
+    return card
+
+
 def load_state():
     try:
         with open(STATE) as f:
@@ -249,6 +329,7 @@ def log_call():
     # Everything that doesn't need the lock happens before taking it.
     clean = scrub(payload)
     result = scrub(summarize(event, payload))
+    card = scorecard(sid) if event in SCORE_EVENTS and not payload.get("agent_id") else None
 
     os.umask(0o077)  # state and lock files are private too
     os.makedirs(LOG_DIR, mode=0o700, exist_ok=True)
@@ -321,6 +402,8 @@ def log_call():
         }
         if sl:
             record["statusline"] = sl
+        if card:
+            record["scorecard"] = card
         if parse_error:
             record["parse_error"] = parse_error
         if env_changed:
@@ -337,6 +420,12 @@ def log_call():
             if sl.get("cost_delta_usd"):
                 extras += f" (+${sl['cost_delta_usd']:.4f})"
             extras += f" sl_age={sl['age_ms']}ms"
+        if card:
+            extras += f" | scorecard={card['level']}" + (f" flags={','.join(card['flags'])}" if card["flags"] else "")
+            os.makedirs(os.path.join(LOG_DIR, "sessions", sid), mode=0o700, exist_ok=True)
+            append(os.path.join(LOG_DIR, "sessions", sid, "scorecards.jsonl"), json.dumps(
+                {"ts": record["ts"], "seq": record["seq"], "event": event, "trigger": payload.get("trigger"), **card},
+                separators=(",", ":")) + "\n")
         append(TEXT, f"{record['ts']} #{record['seq']:<5} {event:<20} "
                      f"{payload.get('tool_name') or '':<12} {result} | {extras}\n")
         save_state(state)
@@ -409,6 +498,10 @@ def main():
             want = int(sys.argv[2])
             found = next((r for r in records() if r.get("seq") == want), None)
             print(json.dumps(found, indent=2) if found else f"No call #{want}")
+        elif cmd == "--scorecard":
+            sid = sys.argv[2] if len(sys.argv) > 2 else next(
+                (r.get("session_id") for r in reversed(list(records())) if r.get("session_id")), None)
+            print(json.dumps({"session_id": sid, **(scorecard(sid) or {})}, indent=2) if sid else "No log yet")
         elif cmd == "--reset":
             for p in (JSONL, TEXT, STATE, ERRORS, JSONL + ".1", TEXT + ".1"):
                 try:

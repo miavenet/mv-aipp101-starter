@@ -2,7 +2,7 @@
 
 ## Wire format basics
 
-- Binary, **little-endian** (to be confirmed against the spec's data-type section).
+- Binary, **little-endian**, packed on 1-byte boundaries with no alignment filler (Common Client v2.4s §3).
 - A packet is a header followed by `NumberMsgs` messages.
 - Every message starts with `MsgSize` and `MsgType`, so unknown types can be skipped.
 
@@ -84,3 +84,25 @@ Examples: delete or execute for an unknown `OrderID`, add with a duplicate `Orde
 execution larger than the remaining quantity, message for an unmapped `SymbolIndex`.
 → Count it, record it in the anomaly ring, **continue**. The policy is configurable later (e.g.
 mark the channel stale on the first anomaly). See [05](05-order-book.md#anomaly-handling).
+
+## Scenarios
+
+Format and rules: [test strategy](../testing/test-strategy.md#scenarios).
+
+| ID | WHEN | THEN | Test |
+|---|---|---|---|
+| DEC-01 | the hand-written fixture for a message type is decoded (one fixture per type, plus the packet header) | every field equals the value listed in the fixture's comments | `pillar fixture: <message name>` (one case per type) |
+| DEC-02 | the payload is shorter than the 16-byte packet header | the packet is rejected as malformed, with a `DecodeError` and a counter, and no exception | `pillar framing: short packet` |
+| DEC-03 | `PktSize` differs from the payload length | the packet is rejected as malformed | `pillar framing: PktSize mismatch` |
+| DEC-04 | a message has `MsgSize < 4` | the packet is rejected as malformed | `pillar framing: MsgSize below header` |
+| DEC-05 | a message's `MsgSize` runs past the end of the packet | the packet is rejected as malformed | `pillar framing: message overruns packet` |
+| DEC-06 | a known type has `MsgSize` below its documented size | the packet is rejected as malformed | `pillar framing: known type too short` |
+| DEC-07 | bytes remain after the last of the `NumberMsgs` messages | the packet is rejected as malformed | `pillar framing: trailing bytes` |
+| DEC-08 | a message has an unknown `MsgType` | it is skipped using `MsgSize`, counted in `unknown_msg_type`, and the messages after it still decode | `pillar dispatch: unknown type is skipped` |
+| DEC-09 | a known type has `MsgSize` above its documented size | the known fields decode, the trailing bytes are ignored, and `oversized_msg` is counted | `pillar dispatch: longer message is accepted` |
+| DEC-10 | a packet holds several messages | message `k` (from 0) gets sequence number `SeqNum + k` | `pillar framing: per-message sequence numbers` |
+| DEC-11 | a heartbeat packet arrives (header only, `NumberMsgs` 0) | it is valid and yields no messages | `pillar framing: heartbeat packet` |
+| DEC-12 | a message carrying only `SourceTimeNS` follows a Source Time Reference for its partition | its event time is that reference's seconds plus `SourceTimeNS` (details pending Q11) | `pillar time: seconds from the partition's reference` |
+| DEC-13 | any fixture is decoded from a buffer at an odd address | the result is identical, with no UBSan report | `pillar views: unaligned buffer` |
+| DEC-P1 | an arbitrary valid message `m` of any type is encoded then decoded | the result equals `m` | `pillar property: decode(encode(m)) == m` |
+| DEC-P2 | each fixture is decoded then re-encoded | the bytes equal the fixture | `pillar property: encode(decode(fixture)) == fixture` |

@@ -63,3 +63,34 @@ See [05](../design/05-order-book.md#invariants-checked-after-every-event-in-debu
   during a replay.
 - Pcap reader robustness: truncated files, bad block lengths, snaplen truncation, VLANs,
   non-UDP frames, both pcap byte orders, and ns and µs resolution.
+
+## Scenarios
+
+Each module's design doc ends with a **Scenarios** table. The idea is borrowed from OpenSpec's
+requirement format, without the tool. It ties every stated behaviour to the test that proves it.
+
+| Column | Meaning |
+|---|---|
+| ID | Stable, never reused: `IO-`, `DEC-`, `ARB-`, `BOOK-` plus a number. `-P` marks a property test, `-A` an anomaly, `-C` a capacity limit |
+| WHEN | The trigger, in the design doc's own terms |
+| THEN | What must be observable: output, events, counters, state |
+| Test | The exact doctest `TEST_CASE` name. `<…>` stands for a family of cases, one per message type |
+
+Rules:
+
+1. **A behaviour that matters gets a scenario before its code is written.** The test is written
+   first or alongside, under the name in the table.
+2. **The table is the contract; the test name is the link.** Renaming a test means updating the table.
+3. **No hand-kept status column.** `tools/check_scenarios.py` reads the tables, searches
+   `src/` for the test names, and reports which scenarios are proven. `--strict` fails when a named
+   test is missing, for CI once a module is declared done.
+4. **Scenarios that wait on an open question say so** (for example "pending Q12") and are settled
+   when the question closes.
+5. Decision tables, state machines and invariants in the design docs stay as they are. Scenarios
+   sit on top of them; they do not replace them.
+
+Where they live: [02 input](../design/02-input-sources.md#scenarios),
+[03 arbitration](../design/03-arbitration-and-gaps.md#scenarios),
+[04 decoding](../design/04-pillar-decoding.md#scenarios),
+[05 order book](../design/05-order-book.md#scenarios). Handler, stats and config get theirs at M1
+steps 10 and 11.

@@ -18,9 +18,10 @@ State per channel: `next_expected : SeqNum`. When packet `p` (first sequence num
 | `s > next_expected` | **Potential gap.** Copy it into the gap buffer and start or extend the gap window. |
 
 Heartbeats carry no messages. They advance nothing, but they do count as
-evidence that the line is alive. **To be verified:** whether a heartbeat's
-`SeqNum` shows the next expected sequence number, which would let a gap be
-detected earlier.
+evidence that the line is alive. Common Client v2.4s §2.2 confirms a heartbeat
+"does not increment the next expected sequence number". It does not say what a
+heartbeat's `SeqNum` holds, so it is not used for gap detection until a real
+capture shows its behaviour.
 
 ## Gap window
 
@@ -58,7 +59,10 @@ A potential gap becomes a **declared gap** when either of these happens first:
 - **Sequence reset:** clear every book and order on the channel, emit
   `ChannelReset`, set `next_expected` from the reset packet, and go to `Synced`.
   This is the **only** way out of `Stale` in M1.
-- **Failover packets:** **to be verified** in the spec. The default is to count them and log them to the anomaly ring.
+- **Failover packets** (`DeliveryFlag` 10, Common Client v2.4s §8.2): a failover starts with a
+  sequence number reset in its own packet, then re-publishes each symbol's mapping, a Symbol Clear,
+  the last Security Status and refresh messages. The reset and the clears do the work, so the
+  packets are processed normally, counted, and logged to the anomaly ring.
 
 ## Recovery seam
 
@@ -83,3 +87,27 @@ See [test strategy](../testing/test-strategy.md#layer-4--arbitration-properties)
 - If every sequence number reaches at least one line, the output equals the single-perfect-line output, with no stale flags.
 - If a sequence number is lost on **both** lines, the channel goes stale at exactly that point and not before.
 - Duplicates never change the output.
+
+## Scenarios
+
+Format and rules: [test strategy](../testing/test-strategy.md#scenarios). Each row names the doctest
+case that proves it. `tools/check_scenarios.py` reports which of those tests exist yet.
+
+| ID | WHEN | THEN | Test |
+|---|---|---|---|
+| ARB-01 | a packet arrives with `s == next_expected` | all `n` messages are processed, `next_expected += n`, and `win_A` or `win_B` is counted for its line | `arb: in-sequence packet is processed` |
+| ARB-02 | a packet arrives with `s + n <= next_expected` | it is dropped with no output, and `dup_A` or `dup_B` is counted | `arb: duplicate packet is dropped` |
+| ARB-03 | a packet arrives with `s < next_expected < s + n` | only the messages numbered `next_expected` and later are processed, and the overlap is counted | `arb: partial overlap processes only new messages` |
+| ARB-04 | a packet arrives with `s > next_expected` | it is buffered, nothing is emitted, and the channel is `Buffering` | `arb: early packet is buffered` |
+| ARB-05 | the other line delivers the missing sequence numbers inside the gap window | the buffered packets drain in order, the channel returns to `Synced`, and nothing is flagged stale | `arb: gap filled within window is invisible` |
+| ARB-06 | packet time passes `gap_start + gap_window` with the hole still open | `ChannelStale` fires exactly once, `next_expected` jumps to the first buffered sequence number, and later updates carry the `stale` flag | `arb: window expiry declares gap` |
+| ARB-07 | buffered packets for the channel exceed `max_buffered_packets` | the gap is declared exactly as in ARB-06 | `arb: full buffer declares gap` |
+| ARB-08 | the first packet seen on a channel is later than the first expected sequence number | the channel goes `Stale` immediately | `arb: late first packet is a gap` |
+| ARB-09 | a heartbeat arrives (`DeliveryFlag` 1, `NumberMsgs` 0) | `next_expected` is unchanged, nothing is emitted, and the line is counted as alive | `arb: heartbeat advances nothing` |
+| ARB-10 | a Sequence Number Reset (type 1) arrives, in any state including `Stale` | every book on the channel is cleared, `ChannelReset` is emitted, `next_expected` follows the reset packet, and the channel is `Synced` | `arb: sequence reset clears and resyncs` |
+| ARB-11 | a packet fails framing validation | it is treated as lost over its sequence range, so the other line can still fill it | `arb: malformed packet counts as loss` |
+| ARB-12 | the channel is `Stale` and no reset arrives | it stays `Stale` for the session and updates keep flowing, flagged | `arb: stale persists without reset` |
+| ARB-13 | a packet carries `DeliveryFlag` 10 (failover) | it is counted and recorded in the anomaly ring, and its messages are processed normally | `arb: failover packets are counted and processed` |
+| ARB-P1 | every sequence number reaches at least one line (random drops, duplicates, bounded reordering) | the output equals the single-perfect-line output with no stale flags | `arb property: coverage` |
+| ARB-P2 | a sequence number is lost on both lines | `ChannelStale` fires exactly once, at that point and not before | `arb property: double loss` |
+| ARB-P3 | extra duplicates are added to either line | the output does not change | `arb property: idempotence` |

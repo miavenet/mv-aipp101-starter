@@ -83,3 +83,31 @@ Exceeding a capacity is counted and reported, not undefined behaviour.
 `OrderRecord` gets intrusive `prev`/`next` links and `Level` gets `head`/`tail`,
 giving each level a FIFO queue at O(1) cost per operation. Callers don't change, because L2
 aggregates stay as they are. Not built in M1.
+
+## Scenarios
+
+Format and rules: [test strategy](../testing/test-strategy.md#scenarios). Field semantics are from
+Integrated Feed v2.5h, as recorded in the [message catalog](../spec/message-catalog.md).
+
+| ID | WHEN | THEN | Test |
+|---|---|---|---|
+| BOOK-01 | an Add Order arrives for a mapped symbol | the order exists, and its level (created if needed) gains its quantity and one order | `book: add inserts order and level` |
+| BOOK-02 | a Modify Order changes only the quantity | the level's quantity changes by the difference and the order stays on its level | `book: modify quantity` |
+| BOOK-03 | a Modify Order changes the price | the order moves to the new level, and the old level is erased if it is now empty | `book: modify price moves level` |
+| BOOK-04 | a Delete Order arrives | the order is gone, its level shrinks, and the level is erased when empty | `book: delete removes order` |
+| BOOK-05 | an Order Execution has `Volume` below the remaining quantity | the order shrinks by `Volume`, a `Trade` is emitted, and the remainder keeps its original price even if the execution price differs | `book: partial execution` |
+| BOOK-06 | an Order Execution has `Volume` equal to the remaining quantity | the order is removed and a `Trade` is emitted | `book: full execution removes order` |
+| BOOK-07 | a Replace Order arrives | the old order is removed, a new one exists under `NewOrderID` on the same side with the new price and quantity, and the old `OrderID` is unknown afterwards | `book: replace swaps order id` |
+| BOOK-08 | a Symbol Clear arrives | every order of that symbol is removed, `BookCleared` is emitted, and other symbols are untouched | `book: symbol clear` |
+| BOOK-09 | a second Symbol Index Mapping changes a symbol's `PriceScaleCode` | later events use the new scale and earlier ones are not rewritten | `book: repeated symbol mapping` |
+| BOOK-10 | a Non-Displayed Trade, Cross Trade, Trade Cancel, Cross Correction, Imbalance, Retail Price Improvement or Stock Summary arrives | the book is unchanged and the matching event is emitted | `book: event-only messages leave book unchanged` |
+| BOOK-11 | a Security Status arrives | `SymbolEntry.status` is updated and a `Status` event is emitted | `book: security status` |
+| BOOK-12 | a Security Status moves a symbol to market state `X` (closed) | the symbol's book is cleared, because the feed sends no deletes at close (pending Q12) | `book: close clears symbol` |
+| BOOK-A1 | a modify, delete or execution names an unknown `OrderID` | it is counted, recorded in the anomaly ring, and ignored | `book anomaly: unknown order id` |
+| BOOK-A2 | an Add Order reuses a live `OrderID` | it is counted, recorded, and replaces the existing order (pending Q3) | `book anomaly: duplicate add` |
+| BOOK-A3 | an execution's `Volume` exceeds the remaining quantity | it is counted, recorded, and the order is removed | `book anomaly: over-execution` |
+| BOOK-A4 | a message names an unmapped `SymbolIndex` | it is counted and dropped | `book anomaly: unmapped symbol` |
+| BOOK-A5 | the book becomes crossed or locked | it is allowed and counted, and the invariants still hold | `book anomaly: crossed book allowed` |
+| BOOK-C1 | a configured capacity (orders, levels, symbols) is exceeded | it is counted and reported, with no undefined behaviour | `book capacity: overflow is counted` |
+| BOOK-P1 | a random sequence of valid events is applied to `Book` and to `ReferenceBook` | after every event the L2 views are equal and the invariants hold | `book property: matches reference oracle` |
+| BOOK-P2 | a random sequence that includes invalid events is applied | anomalies are counted and the invariants never break | `book property: invalid events keep invariants` |

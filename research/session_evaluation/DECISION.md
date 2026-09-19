@@ -1,6 +1,14 @@
 # Decision: session evaluation at the auto-compact point
 
-Date: 2026-09-19. Status: **proposed, not built.** Reasoning is in [`ANALYSIS.md`](ANALYSIS.md).
+Date: 2026-09-19. Status: **phase 1 built (shadow scorecard), phases 2 and 3 proposed.** Reasoning is in
+[`ANALYSIS.md`](ANALYSIS.md).
+
+Phase 1 lives in `.claude/hooks/log-hook.py`: on `PreCompact` and `SessionEnd` it adds a `scorecard`
+block to the hook record and appends it to `hook-logs/sessions/<id>/scorecards.jsonl`. Run
+`log-hook.py --scorecard` to see the current session's. It only observes. Not yet covered: user
+corrections, edit churn against net diff, and verified progress per dollar, which need the
+transcript or git. What the user did after each compaction can be read back from the log (the next
+`SessionStart` source), so no separate label is recorded.
 
 ## Decision
 

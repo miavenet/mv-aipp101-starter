@@ -77,6 +77,34 @@ class LogHookTest(unittest.TestCase):
         self.assertIn("since_first_seen_s", unseen)
         self.assertEqual(clear["since_session_start_s"], 0.0)
 
+    def test_scorecard_flags_loops_in_shadow_mode(self):
+        def call(sid, i, cmd, fail=False, agent=None):
+            extra = {"agent_id": agent} if agent else {}
+            self.fire({"hook_event_name": "PreToolUse", "session_id": sid, "tool_name": "Bash", "tool_use_id": f"t{i}",
+                       "tool_input": {"command": cmd}, **extra})
+            self.fire({"hook_event_name": "PostToolUseFailure" if fail else "PostToolUse", "session_id": sid,
+                       "tool_name": "Bash", "tool_use_id": f"t{i}", **extra})
+        for i in range(4):                       # the same failing command four times: two flags
+            call("LOOP", i, "make test", fail=True)
+        for i in range(3):                       # distinct calls, plus a subagent repeating itself
+            call("OK", i, f"ls {i}")
+        for i in range(10, 16):
+            call("OK", i, "grep x", agent="sub1")
+        p = self.fire({"hook_event_name": "PreCompact", "session_id": "LOOP", "trigger": "auto"})
+        self.assertEqual((p.returncode, p.stdout, p.stderr), (0, "", ""))  # observes only, never blocks
+        self.fire({"hook_event_name": "SessionEnd", "session_id": "OK"})
+        self.fire({"hook_event_name": "Stop", "session_id": "OK"})
+        loop, ok, stop = self.records()[-3:]
+        self.assertEqual((loop["scorecard"]["identical_call_streak"], loop["scorecard"]["same_failure_streak"]), (4, 4))
+        self.assertEqual((loop["scorecard"]["level"], loop["scorecard"]["failure_rate"]), ("red", 1.0))
+        self.assertEqual(sorted(loop["scorecard"]["flags"]), ["identical_call_streak", "same_failure_streak"])
+        self.assertEqual((ok["scorecard"]["level"], ok["scorecard"]["tool_calls"]), ("green", 3))
+        self.assertNotIn("scorecard", stop)
+        with open(os.path.join(self.dir, "sessions", "LOOP", "scorecards.jsonl")) as f:
+            saved = [json.loads(line) for line in f]
+        self.assertEqual([(s["event"], s["trigger"], s["level"]) for s in saved], [("PreCompact", "auto", "red")])
+        self.assertEqual(json.loads(self.fire("", args=("--scorecard", "LOOP")).stdout)["level"], "red")
+
     def test_secrets_redacted(self):
         self.fire({"hook_event_name": "PostToolUse", "session_id": "A", "tool_name": "Read",
                    "tool_input": {"file_path": ".env", "api_key": "abc123456"},

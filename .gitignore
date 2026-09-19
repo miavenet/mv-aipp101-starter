@@ -8,3 +8,7 @@ build/
 
 # Persistent container HOME (holds credentials)
 sk-home/
+
+# Claude Code personal settings and hook logs
+.claude/settings.local.json
+.claude/hook-logs/

@@ -80,6 +80,28 @@ The API key stays in the checkout's ignored `.env` file, not in the image. The
 workshop preset uses GCC, Debug, tests enabled, and AddressSanitizer disabled.
 Builds use two parallel jobs to limit memory usage on student laptops.
 
+## Optional: persistent HOME with Claude Code and Copilot
+
+The workshop image installs `claude` and `copilot` under `/home/agent`, which the
+host UID used by the launcher cannot read. `docker/Dockerfile.home` layers a thin
+image on top of the pulled workshop image to make them usable. Build it once on
+the host (seconds; it does not rebuild the toolchain), and again whenever
+`WORKSHOP_IMAGE` changes:
+
+```bash
+docker build -f docker/Dockerfile.home \
+  --build-arg BASE_IMAGE="$WORKSHOP_IMAGE" \
+  -t aipp101-workshop:home docker
+./scripts/workshop.sh aipp101-workshop:home
+```
+
+Inside that shell, run `claude` or `copilot`. The launcher sets `HOME` to
+`/workspace/sk-home`; on first launch the image copies its original HOME there
+and creates `sk-home/.seeded`. Logins, settings, and shell history then persist
+across runs even though the container is removed on exit. `sk-home/` is ignored
+by git because it holds credentials. To reset, delete `sk-home/` on the host; the
+next launch seeds it again.
+
 ## During the workshop
 
 Pull changes from the host shell, then build in the container:

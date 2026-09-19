@@ -1,0 +1,48 @@
+# =============================================================================
+# Thin layer over the workshop image: make the image HOME usable by any uid
+# and seed it into the persistent /workspace/sk-home on first run.
+# =============================================================================
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG IMAGE_HOME=/home/agent
+ARG PERSIST_HOME=/workspace/sk-home
+
+USER root
+
+# -----------------------------------------------------------------------------
+# Move the image HOME to a world-readable seed; retarget absolute symlinks
+# (e.g. ~/.local/bin/claude) and ensure the tools are on PATH from .bashrc
+# -----------------------------------------------------------------------------
+RUN mv ${IMAGE_HOME} /opt/home-seed \
+    && mkdir -p ${IMAGE_HOME} \
+    && find /opt/home-seed -type l -lname "${IMAGE_HOME}/*" | while read -r link; do \
+           ln -sfn "$(readlink "$link" | sed "s|^${IMAGE_HOME}|${PERSIST_HOME}|")" "$link"; \
+       done \
+    && echo 'export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"' >> /opt/home-seed/.bashrc \
+    && chmod -R a+rX /opt/home-seed
+
+# -----------------------------------------------------------------------------
+# Seed the persistent HOME once, then run the requested command
+# -----------------------------------------------------------------------------
+COPY <<'EOF' /usr/local/bin/seed-home
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ! -e "$HOME/.seeded" ]]; then
+    echo "Seeding $HOME from the image (one-time, may take a minute)..." >&2
+    mkdir -p "$HOME"
+    cp -a /opt/home-seed/. "$HOME"/
+    touch "$HOME/.seeded"
+fi
+exec "$@"
+EOF
+RUN chmod 755 /usr/local/bin/seed-home
+
+ENV HOME=${PERSIST_HOME}
+ENV NPM_CONFIG_PREFIX=${PERSIST_HOME}/.npm-global
+ENV PATH="${PERSIST_HOME}/.npm-global/bin:${PERSIST_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+USER agent
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/seed-home"]
+CMD ["/bin/bash"]

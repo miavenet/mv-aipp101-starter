@@ -48,7 +48,7 @@ are **to be verified** during implementation and recorded in the
 | Order Execution | Reduce qty by the executed amount, removing the order at zero. Also emit a `Trade` event. |
 | Non-displayed / cross / trade-cancel / correction | No book effect. Emit `Trade` / `TradeCorrection` events. |
 | Imbalance | No book effect. Emit an `Imbalance` event. |
-| Security Status | Update `SymbolEntry.status` and emit a `Status` event. |
+| Security Status | Update `SymbolEntry.status` and emit a `Status` event. Market state `X` (closed) also clears the symbol's book: the feed sends no deletes at close. |
 | Symbol Index Mapping | Create or overwrite `SymbolEntry` (ticker, scale, channel). |
 | Symbol Clear | Remove all orders for the symbol and emit `BookCleared`. |
 
@@ -57,7 +57,7 @@ are **to be verified** during implementation and recorded in the
 | Anomaly | M1 behaviour |
 |---|---|
 | Unknown `OrderID` on modify/delete/execute | Count, record in the anomaly ring, ignore the message. |
-| Duplicate `OrderID` on add | Count, record, **replace** the existing order. (Policy to revisit; see [open questions](../open-questions.md).) |
+| Duplicate `OrderID` on add | Count, record, **replace** the existing order. The feed re-adds a returned routed order under the same ID, so this is expected now and then. |
 | Execution qty > remaining | Count, record, remove the order. |
 | Unmapped `SymbolIndex` | Count, drop the message. |
 | Crossed or locked book | **Allowed** (legitimate around auctions). Counted, not an error. |
@@ -102,9 +102,9 @@ Integrated Feed v2.5h, as recorded in the [message catalog](../spec/message-cata
 | BOOK-09 | a second Symbol Index Mapping changes a symbol's `PriceScaleCode` | later events use the new scale and earlier ones are not rewritten | `book: repeated symbol mapping` |
 | BOOK-10 | a Non-Displayed Trade, Cross Trade, Trade Cancel, Cross Correction, Imbalance, Retail Price Improvement or Stock Summary arrives | the book is unchanged and the matching event is emitted | `book: event-only messages leave book unchanged` |
 | BOOK-11 | a Security Status arrives | `SymbolEntry.status` is updated and a `Status` event is emitted | `book: security status` |
-| BOOK-12 | a Security Status moves a symbol to market state `X` (closed) | the symbol's book is cleared, because the feed sends no deletes at close (pending Q12) | `book: close clears symbol` |
+| BOOK-12 | a Security Status moves a symbol to market state `X` (closed) | the symbol's book is cleared, because the feed sends no deletes at close | `book: close clears symbol` |
 | BOOK-A1 | a modify, delete or execution names an unknown `OrderID` | it is counted, recorded in the anomaly ring, and ignored | `book anomaly: unknown order id` |
-| BOOK-A2 | an Add Order reuses a live `OrderID` | it is counted, recorded, and replaces the existing order (pending Q3) | `book anomaly: duplicate add` |
+| BOOK-A2 | an Add Order reuses a live `OrderID` | it is counted, recorded, and replaces the existing order | `book anomaly: duplicate add` |
 | BOOK-A3 | an execution's `Volume` exceeds the remaining quantity | it is counted, recorded, and the order is removed | `book anomaly: over-execution` |
 | BOOK-A4 | a message names an unmapped `SymbolIndex` | it is counted and dropped | `book anomaly: unmapped symbol` |
 | BOOK-A5 | the book becomes crossed or locked | it is allowed and counted, and the invariants still hold | `book anomaly: crossed book allowed` |

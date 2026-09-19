@@ -66,6 +66,18 @@ Messages are **newer or longer than expected** when `MsgSize` exceeds the known 
 They are accepted: the known fields are read, the trailing bytes ignored, and the case counted as
 `oversized_msg`. Pillar adds fields at the end.
 
+## Time base
+
+Order and trade messages carry only `SourceTimeNS`. The seconds come from the most recent Source
+Time Reference (type 2) for the symbol's matching-engine partition (Common Client v2.4s §3.2, §4.2).
+
+- The decoder keeps a small fixed table per channel: partition `ID` → seconds.
+- A symbol's partition is its `SystemID` from Symbol Index Mapping.
+- Event time = `seconds[partition] * 1e9 + SourceTimeNS`, as one integer `Timestamp`.
+- Before the first reference for a partition, seconds are 0 and `time_ref_missing` is counted.
+- Imbalance, Add Order Refresh, Stock Summary and the control messages carry a full `SourceTime`
+  and do not use the table.
+
 ## Errors
 
 | Where | Mechanism |
@@ -102,7 +114,7 @@ Format and rules: [test strategy](../testing/test-strategy.md#scenarios).
 | DEC-09 | a known type has `MsgSize` above its documented size | the known fields decode, the trailing bytes are ignored, and `oversized_msg` is counted | `pillar dispatch: longer message is accepted` |
 | DEC-10 | a packet holds several messages | message `k` (from 0) gets sequence number `SeqNum + k` | `pillar framing: per-message sequence numbers` |
 | DEC-11 | a heartbeat packet arrives (header only, `NumberMsgs` 0) | it is valid and yields no messages | `pillar framing: heartbeat packet` |
-| DEC-12 | a message carrying only `SourceTimeNS` follows a Source Time Reference for its partition | its event time is that reference's seconds plus `SourceTimeNS` (details pending Q11) | `pillar time: seconds from the partition's reference` |
+| DEC-12 | a message carrying only `SourceTimeNS` follows a Source Time Reference for its partition | its event time is that reference's seconds plus `SourceTimeNS`. Before any reference, seconds are 0 and `time_ref_missing` is counted | `pillar time: seconds from the partition's reference` |
 | DEC-13 | any fixture is decoded from a buffer at an odd address | the result is identical, with no UBSan report | `pillar views: unaligned buffer` |
 | DEC-P1 | an arbitrary valid message `m` of any type is encoded then decoded | the result equals `m` | `pillar property: decode(encode(m)) == m` |
 | DEC-P2 | each fixture is decoded then re-encoded | the bytes equal the fixture | `pillar property: encode(decode(fixture)) == fixture` |

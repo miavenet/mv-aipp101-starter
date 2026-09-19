@@ -69,9 +69,10 @@ out of scope for M1, which has no recovery.
       differ from the order's price, and "any remaining shares keep their original price". (IF §5)
 - [x] **Price scaling.** Per symbol, from `PriceScaleCode` in Symbol Index Mapping. Valid codes are
       6, 4 and 3. Prices are signed 4-byte integers and are never negative. (CC §3.5, §4.3)
-      ⚠ The formula itself is an equation that does not extract as text. Its glyphs read
-      Price = Numerator / 10^PriceScaleCode, and the maximum-price table agrees (code 6 gives
-      $2,147.48). **Owner to confirm by eye during fixture review.**
+      The formula is an equation, so it does not extract as plain text. Two independent readings
+      agree on Price = Numerator / 10^PriceScaleCode: the equation's glyphs, and the spec's own
+      maximum-price table (2³¹−1 = 2,147,483,647, which is $2,147.48 at code 6 and $214,748.364 at
+      code 4, exactly the listed maxima).
 - [x] **Heartbeats.** `DeliveryFlag` 1, `NumberMsgs` 0, and a heartbeat "does not increment the next
       expected sequence number". Once a second on data channels. (CC §2.2)
       ⚠ The spec does not say what `SeqNum` holds in a heartbeat. Do not use it for gap detection
@@ -90,7 +91,7 @@ out of scope for M1, which has no recovery.
 1. **The time base is per partition.** Order messages carry only `SourceTimeNS`. The seconds come
    from the last Source Time Reference for the symbol's partition, linked through `SystemID` in
    Symbol Index Mapping. The handler needs a small per-channel table of seconds keyed by partition
-   ID. The design docs do not yet describe this.
+   ID. Designed in [04, Time base](../design/04-pillar-decoding.md#time-base).
 2. **An Add Order may reuse a live-looking `OrderID`.** An order that was routed away and returned
    is re-published "with the same order ID". A duplicate add is therefore not always an anomaly.
    (IF §2)
@@ -104,7 +105,14 @@ out of scope for M1, which has no recovery.
    `static_assert(total_size == documented MsgSize)` stays valid as a check on our own tables.
 6. **Inconsistency in the spec.** CC §3.6 opens by calling both Order ID and Trade ID "8 byte
    integers", then §3.6.1 and every message table give Trade ID 4 bytes. The tables win.
-7. **Imbalance per-market columns.** The Imbalance table has four columns saying which markets
-   populate each field. Their headings are rotated text and do not extract. For NYSE-only scope this
-   matters for `MarketImbalanceQty`, `SSRFilingPrice`, `IndicativeMatchPrice`, the collars,
-   `NumExtensions` and `UnpairedQty`. **Owner to read the column headings from the PDF.**
+7. **Imbalance per-market columns.** The four columns are NYSE, American, Arca, Texas, left to
+   right. The rotated headings and every cell were read with their x coordinates, so each value is
+   tied to its column by position. For the NYSE market:
+
+   | Field | NYSE |
+   |---|---|
+   | `MarketImbalanceQty`, `IndicativeMatchPrice`, `UpperCollar`, `LowerCollar`, `NumExtensions` | **Not populated** (the other three markets only) |
+   | `SSRFilingPrice`, `UnpairedQty`, `UnpairedSide` values `B`/`S` | **NYSE only** |
+   | `AuctionType` | `M`, `H`, `C`, plus `P` (extreme closing imbalance) and `R` (significant closing imbalance), which are NYSE only. `O` (early opening) is not used on NYSE |
+   | `AuctionStatus` | 0 and 3 only. 1 and 2 are for the other markets |
+   | All other fields | Populated |

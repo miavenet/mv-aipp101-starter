@@ -59,6 +59,24 @@ class LogHookTest(unittest.TestCase):
         self.assertNotIn("turn_duration_s", recs[4]["derived"])
         self.assertIn("turn_duration_s", recs[5]["derived"])
 
+    def test_compaction_does_not_restart_session_clock(self):
+        self.fire({"hook_event_name": "SessionStart", "session_id": "A", "source": "startup"})
+        self.fire({"hook_event_name": "PreCompact", "session_id": "A", "trigger": "auto"})
+        self.fire({"hook_event_name": "SessionStart", "session_id": "A", "source": "compact"})
+        self.fire({"hook_event_name": "PostCompact", "session_id": "A", "trigger": "auto"})
+        self.fire({"hook_event_name": "SessionStart", "session_id": "A", "source": "resume"})
+        # A resume of a session the logger has never seen is not the session's real start.
+        self.fire({"hook_event_name": "SessionStart", "session_id": "B", "source": "resume"})
+        self.fire({"hook_event_name": "SessionStart", "session_id": "A", "source": "clear"})
+        start, pre, compact, post, resume, unseen, clear = (r["derived"] for r in self.records())
+        self.assertEqual(start["since_session_start_s"], 0.0)
+        self.assertGreater(compact["since_session_start_s"], pre["since_session_start_s"])
+        self.assertGreater(resume["since_session_start_s"], compact["since_session_start_s"])
+        self.assertEqual(["compactions" in d for d in (pre, compact)], [False, False])
+        self.assertEqual((post["compactions"], resume["compactions"]), (1, 1))
+        self.assertIn("since_first_seen_s", unseen)
+        self.assertEqual(clear["since_session_start_s"], 0.0)
+
     def test_secrets_redacted(self):
         self.fire({"hook_event_name": "PostToolUse", "session_id": "A", "tool_name": "Read",
                    "tool_input": {"file_path": ".env", "api_key": "abc123456"},

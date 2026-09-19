@@ -14,7 +14,9 @@ Derived timings (tracked per session_id):
   pre_to_post_ms        PreToolUse -> PostToolUse as seen by this logger
                         (includes permission prompts and hook latency)
   turn_duration_s       UserPromptSubmit -> Stop
-  since_prev_hook_ms, since_session_start_s
+  since_prev_hook_ms, since_session_start_s (not reset by the SessionStart
+                        that follows a compaction or resume)
+  compactions           completed compactions so far in the session
 
 Status line data: hooks don't receive context/cost/rate-limit info, but the
 status line does. ~/.claude/statusline-command.sh saves its latest input to
@@ -262,11 +264,18 @@ def log_call():
         derived = {}
         if s.get("last_ns"):
             derived["since_prev_hook_ms"] = round((NOW_NS - s["last_ns"]) / 1e6, 3)
-        if event == "SessionStart" or "start_ns" not in s:
+        # SessionStart also fires mid-session (source "compact" or "resume") with the
+        # same session_id; those must not restart the clock.
+        continuing = payload.get("source") in ("compact", "resume")
+        if "start_ns" not in s or (event == "SessionStart" and not continuing):
             s["start_ns"] = NOW_NS
-            s["start_is_real"] = event == "SessionStart"
+            s["start_is_real"] = event == "SessionStart" and not continuing
         key = "since_session_start_s" if s.get("start_is_real") else "since_first_seen_s"
         derived[key] = round((NOW_NS - s["start_ns"]) / 1e9, 3)
+        if event == "PostCompact":
+            s["compactions"] = s.get("compactions", 0) + 1
+        if s.get("compactions"):
+            derived["compactions"] = s["compactions"]
 
         tool_use_id = payload.get("tool_use_id")
         if event == "PreToolUse" and tool_use_id:

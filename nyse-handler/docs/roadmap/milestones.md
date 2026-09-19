@@ -32,14 +32,17 @@ Suggested order (each step ends green):
 
 - The first real pcaps are replayed. Golden dumps are reviewed.
 - Anomaly counters are investigated and explained.
-- Benchmarks: ns/packet histogram, data-structure choices confirmed or changed.
+- Benchmarks: per-packet median, p99 and max, and day-replay throughput, checked against the
+  [latency budget](../design/08-performance-guidelines.md#latency-budget-decided-2026-09-19-a-hypothesis-until-measured). Data-structure choices confirmed or changed.
+- Stock Summary reconciliation run over each real capture.
 - Capacities sized from the observed data.
 
 ## M3: Live
 
 - `MulticastSource` (plain sockets, `recvmmsg`, timestamps).
-- A production `StatsSink`.
-- A latency target is set.
+- A production `StatsSink`: shared-memory snapshot, the `nyse_stats` reader, and a sidecar for the
+  monitoring backend chosen then.
+- Wire-to-callback latency measured live against the budget.
 
 ## M4: Recovery and hardening
 

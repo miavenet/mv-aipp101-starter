@@ -24,7 +24,7 @@ nlohmann/json is already a dependency of the host repo.
     }
   ],
   "arbitration": {
-    "gap_window_ns": 1000000,
+    "gap_window_ns": 5000000,
     "max_buffered_packets": 1024
   },
   "capacity": {

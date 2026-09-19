@@ -54,8 +54,22 @@ See [05](../design/05-order-book.md#invariants-checked-after-every-event-in-debu
 
 - **M1:** a synthetic A/B pcap (every message type plus an injected double loss) goes through the
   real `nyse_replay` CLI. Its `--dump-events` output is diffed against a reviewed golden file.
-- **When real pcaps arrive:** add golden dumps from them. Cross-check against an independent
-  source (TAQ or a vendor feed) where available.
+- **When real pcaps arrive:** add golden dumps from them.
+- **Cross-check (M2): Stock Summary reconciliation.** There is no access to TAQ, a vendor feed or
+  SIP data, so the check uses the feed itself. The Stock Summary message (type 223) gives the
+  exchange's own high, low, open, close and total volume per symbol every 60 seconds. A
+  `SummaryReconciler` consumer accumulates the same figures from our trade events and reports every
+  symbol where they differ at a summary tick.
+  - Volume rule to confirm on the first real capture: printable Order Executions and Non-Displayed
+    Trades, plus Cross Trades, minus Trade Cancels, adjusted by Cross Corrections. Auction fills
+    carry `PrintableFlag` 0 precisely so the Cross Trade's bulk volume is not double counted
+    (Integrated Feed v2.5h §5, §10).
+  - It catches wrong trade decoding, missed cancels and double-counted auction volume.
+  - It does **not** validate the book. The free book check is consistency with the feed's own
+    executions: an execution against an `OrderID` we do not hold, or at a price where we show no
+    such order, is counted by the existing anomaly counters and should be near zero on a clean day.
+  - Stock Summary is on its own channel, so the capture must include it.
+- If TAQ or a vendor source becomes available later, add it on top.
 
 ## Layer 7: Hot-path discipline
 

@@ -2,9 +2,10 @@
 
 Every Pillar packet header carries a per-channel `SeqNum`, a message count
 (`NumberMsgs`), a send time, and a `DeliveryFlag`. `DeliveryFlag` separates
-original, retransmitted, refresh, sequence-reset, and heartbeat packets. The
-exact header layout and flag codes are **to be verified** from the spec.
-See [message catalog](../spec/message-catalog.md).
+original, retransmitted, refresh, sequence-reset, and heartbeat packets. The 16-byte header
+layout and the flag codes (1 heartbeat, 10 failover, 11 original, 12 sequence number reset, …)
+are in [field layouts](../spec/field-layouts.md) and the
+[message catalog](../spec/message-catalog.md), from Common Client v2.4s §2.1.
 
 ## Arbitration: first arrival wins, per channel
 
@@ -27,8 +28,16 @@ capture shows its behaviour.
 
 A potential gap becomes a **declared gap** when either of these happens first:
 - **Time:** `packet_time_now − gap_start_packet_time > gap_window` (default
-  1 ms, configurable). This uses **packet time**, so pcap replay behaves
+  **5 ms**, configurable). This uses **packet time**, so pcap replay behaves
   exactly like live.
+
+The default leans long on purpose. The capture site and its A/B skew are not known yet, and the
+costs are lopsided: too short a window makes a channel stale for the whole session over a packet
+that was only late, while too long a window just holds packets a little longer while a hole is open.
+
+To set it from data, the arbiter records a **fill-time histogram** (how long each filled gap waited
+for the other line) and the **buffer high-water mark** per channel. The first real capture then
+shows the true skew, and the default is revisited.
 - **Space:** buffered packets for the channel exceed `max_buffered_packets`
   (config), sized in advance from the pool.
 
@@ -108,6 +117,7 @@ case that proves it. `tools/check_scenarios.py` reports which of those tests exi
 | ARB-11 | a packet fails framing validation | it is treated as lost over its sequence range, so the other line can still fill it | `arb: malformed packet counts as loss` |
 | ARB-12 | the channel is `Stale` and no reset arrives | it stays `Stale` for the session and updates keep flowing, flagged | `arb: stale persists without reset` |
 | ARB-13 | a packet carries `DeliveryFlag` 10 (failover) | it is counted and recorded in the anomaly ring, and its messages are processed normally | `arb: failover packets are counted and processed` |
+| ARB-14 | a gap is filled by the other line | the wait is added to the channel's fill-time histogram, and the buffer high-water mark is updated | `arb: fill time and high-water mark are recorded` |
 | ARB-P1 | every sequence number reaches at least one line (random drops, duplicates, bounded reordering) | the output equals the single-perfect-line output with no stale flags | `arb property: coverage` |
 | ARB-P2 | a sequence number is lost on both lines | `ChannelStale` fires exactly once, at that point and not before | `arb property: double loss` |
 | ARB-P3 | extra duplicates are added to either line | the output does not change | `arb property: idempotence` |

@@ -36,8 +36,17 @@ public:
 - Virtual dispatch is fine here, because this is a cold path.
 - **M1:** `StderrStatsSink` prints a formatted report at the end of a replay and on `SIGUSR1`.
   The signal handler only sets a flag, which the loop checks between packets.
-- **Future:** a production implementation (Prometheus, the internal bus, …). In multi-threaded
-  production builds, snapshots are taken by a seqlock or a double-buffered copy.
+- **M3 (decided 2026-09-19): `ShmStatsSink` plus a sidecar.** Once a second the handler writes a
+  fixed-layout, versioned `StatsSnapshot` into a shared-memory region (a file-backed `mmap`), guarded
+  by a seqlock so a reader never sees a torn snapshot. A separate process reads it and speaks
+  whatever the monitoring stack turns out to be (Prometheus, OpenTelemetry, a message bus). The
+  backend is undecided and is chosen at M3; the handler does not change when it is.
+  - No sockets, HTTP server or third-party library in the latency-sensitive process.
+  - `nyse_stats`, a small command-line reader of the same region, works with no monitoring stack.
+  - The snapshot layout is plain integers with a version field, so the sidecar can be written in any
+    language.
+- In multi-threaded production builds, each thread owns its counters and the snapshot writer sums
+  them, still behind the seqlock.
 
 ## Logging
 

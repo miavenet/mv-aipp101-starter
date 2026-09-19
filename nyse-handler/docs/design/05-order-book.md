@@ -35,9 +35,8 @@ Level { RawPrice price; Volume qty; std::uint32_t order_count; }
 
 ## Message → book effect
 
-The message names follow the Integrated Feed spec. The exact semantics of each field
-are **to be verified** during implementation and recorded in the
-[message catalog](../spec/message-catalog.md).
+The message names and field semantics follow Integrated Feed v2.5h, as recorded in the
+[message catalog](../spec/message-catalog.md#semantic-questions-answered-from-the-spec).
 
 | Message | Book effect |
 |---|---|

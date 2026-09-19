@@ -12,3 +12,7 @@ sk-home/
 # Claude Code personal settings and hook logs
 .claude/settings.local.json
 .claude/hook-logs/
+
+# NYSE spec PDFs: all rights reserved by NYSE, so kept locally and never committed.
+# docs/spec/README.md records the versions, URLs and checksums.
+nyse-handler/docs/spec/pdf/

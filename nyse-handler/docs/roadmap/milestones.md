@@ -14,7 +14,8 @@
 
 Suggested order (each step ends green):
 
-1. **Spec:** fetch the latest spec and record the version. Fill in the [message catalog](../spec/message-catalog.md).
+1. ✅ **Spec:** fetch the latest spec and record the version. Fill in the [message catalog](../spec/message-catalog.md).
+   Done 2026-09-19: Integrated Feed v2.5h, Common Client v2.4s, all 20 layouts in [field-layouts](../spec/field-layouts.md).
 2. **Build wiring:** add `nyse-handler/` to CMake, with empty module libraries, UBSan, and the no-`chat`-include check.
 3. **core:** `types.atlas` (Price, Volume, OrderId, SymbolIndex, SeqNum, ChannelId, Timestamp, …), `Packet`.
 4. **Fixtures:** hex fixtures for the packet header and every message type → **owner review**.

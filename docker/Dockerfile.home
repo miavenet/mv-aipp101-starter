@@ -2,7 +2,8 @@
 # Thin layer over the workshop image: make the image HOME usable by any uid
 # and seed it into the persistent /workspace/sk-home on first run.
 # =============================================================================
-ARG BASE_IMAGE
+# Default matches docs/workshop-checkpoints.md; override with --build-arg BASE_IMAGE=...
+ARG BASE_IMAGE=ghcr.io/jodyhagins/aipp101-starter/workshop@sha256:d6a8c8324c2e3c6a39994ea42daf59a41af9bae16e480052ea112b626efdd028
 FROM ${BASE_IMAGE}
 
 ARG IMAGE_HOME=/home/agent

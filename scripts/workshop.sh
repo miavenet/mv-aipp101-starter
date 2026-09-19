@@ -15,7 +15,9 @@ terminal_flag=-i
 if [[ -t 0 && -t 1 ]]; then
     terminal_flag=-it
 fi
+# Persist HOME (shell history, tool sessions) across runs via the bind mount.
+mkdir -p "$project_dir/sk-home"
 exec docker run --rm --init --pull=never "$terminal_flag" \
-    --user "$(id -u):$(id -g)" --env HOME=/tmp \
+    --user "$(id -u):$(id -g)" --env HOME=/workspace/sk-home \
     --mount "type=bind,source=$project_dir,target=/workspace" \
     --workdir /workspace "$workshop_image" "$@"

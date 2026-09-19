@@ -5,3 +5,6 @@ build/
 # Environment configuration
 .env
 .env.local
+
+# Persistent container HOME (holds credentials)
+sk-home/

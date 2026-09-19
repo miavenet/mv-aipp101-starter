@@ -170,6 +170,11 @@ def statusline_info(sid, s):
         "ctx_used_pct": dig(sl, "context_window", "used_percentage"),
         "ctx_tokens": ctx_tokens or None,
         "ctx_window": dig(sl, "context_window", "context_window_size"),
+        # Last API request: uncached input / written to cache / read from cache / output.
+        "tok_in": usage.get("input_tokens"),
+        "tok_cache_write": usage.get("cache_creation_input_tokens"),
+        "tok_cache_read": usage.get("cache_read_input_tokens"),
+        "tok_out": usage.get("output_tokens"),
         "cost_usd": dig(sl, "cost", "total_cost_usd"),
         "api_duration_ms": dig(sl, "cost", "total_api_duration_ms"),
         "lines_added": dig(sl, "cost", "total_lines_added"),

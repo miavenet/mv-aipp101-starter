@@ -114,6 +114,7 @@ class LogHookTest(unittest.TestCase):
         self.fire({"hook_event_name": "Stop", "session_id": "B"})  # no snapshot for B
         a, b, c = self.records()
         self.assertEqual((a["statusline"]["ctx_used_pct"], a["statusline"]["ctx_tokens"]), (25, 1002))
+        self.assertEqual([a["statusline"][k] for k in ("tok_in", "tok_cache_read", "tok_out")], [2, 1000, 99])
         self.assertNotIn("cost_delta_usd", a["statusline"])
         self.assertEqual((b["statusline"]["cost_delta_usd"], b["statusline"]["ctx_delta_tokens"]), (0.25, 500))
         self.assertGreater(b["statusline"]["age_ms"], 0)

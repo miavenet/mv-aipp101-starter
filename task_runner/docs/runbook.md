@@ -26,6 +26,31 @@ flowchart TB
     F1 -- "reconciliation error" --> RECON["someone changed the branch or tree while paused.<br/>Put it back as the message says, then resume"]
 ```
 
+## 0. Choose where the record goes
+
+> [!IMPORTANT]
+> **`--runs-dir DIR` decides where every run's artifacts are kept.** Without it the record is the
+> hidden `.runs/` at the top of the repository. With it, each run gets its own directory
+> `DIR/<workflow>/<workflow>-<UTC start>-<uuid8>/`: a meaningful name plus the run's UUID prefix,
+> matching its branch `run/<workflow>-<uuid8>`. The option goes **before** the command and is
+> relative to the current directory:
+>
+> ```sh
+> runner --runs-dir runs start tr/spsc-queue.toml
+> runner --runs-dir runs status
+> runner --runs-dir runs resume
+> ```
+>
+> The location is not remembered. **Every** later command on those runs (`status`, `activity`,
+> `runs`, `resume`, `approve`, `reject`, `resolve`, `retry`, `replan`, `prune`, and `doctor`, whose
+> cache lives there) needs the same `--runs-dir`, or it answers `no runs directory …`. To avoid
+> repeating it, export `TASK_RUNNER_RUNS_DIR=runs` (relative to the top of the repository) or wrap
+> the runner in a project script that always passes the option. The directory writes its own
+> `.gitignore`, so it never dirties the tree; listing it in the project's `.gitignore` as well is harmless and
+> makes the intent visible.
+
+Wherever this runbook says `.runs/`, read: the directory you chose.
+
 ## 1. Before the first run — verified at stage 4
 
 1. `runner validate WORKFLOW`. Fix every error. Read the warnings and the expanded DAG; check that
@@ -40,7 +65,8 @@ flowchart TB
 
 ## 2. Starting and watching a run — verified at stage 3
 
-- `runner start WORKFLOW` creates a run, checks out `run/<workflow>-<uuid8>`, and works until it is
+- `runner [--runs-dir DIR] start WORKFLOW` creates a run directory
+  `<workflow>-<UTC start>-<uuid8>` (see section 0), checks out `run/<workflow>-<uuid8>`, and works until it is
   done or needs something.
 - While it runs, use `runner activity latest --tail 20` for recent agent tool/hook events. See
   [headless observability](headless-observability.md) for provenance and missing-event limitations.

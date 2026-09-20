@@ -33,6 +33,10 @@ def _main(argv=None):
     parser = argparse.ArgumentParser(prog="runner", description="Run a workflow of tasks to "
                                      "completion with headless coding agents.")
     parser.add_argument("--version", action="version", version=f"runner {__version__}")
+    parser.add_argument("--runs-dir", metavar="DIR", help="keep the record of runs in DIR instead "
+                        "of .runs/ at the top of the repository (relative to the current "
+                        "directory). Every later command on those runs needs it too; exporting "
+                        f"{record.RUNS_DIR_ENV} does the same")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
     p = sub.add_parser("validate", help="check everything; print the expanded DAG in execution "
@@ -127,7 +131,17 @@ def _main(argv=None):
     if not args.command:
         parser.print_help(sys.stderr)
         return EXIT_FAILED
-    return args.func(args)
+    if not args.runs_dir:
+        return args.func(args)
+    previous = os.environ.get(record.RUNS_DIR_ENV)
+    os.environ[record.RUNS_DIR_ENV] = os.path.abspath(os.path.expanduser(args.runs_dir))
+    try:
+        return args.func(args)
+    finally:
+        if previous is None:
+            del os.environ[record.RUNS_DIR_ENV]
+        else:
+            os.environ[record.RUNS_DIR_ENV] = previous
 
 
 def report_problems(wf, out):
@@ -332,7 +346,9 @@ def cmd_start(args):
 def _runs_dir(where):
     path = record.find_runs_dir(os.path.abspath(where))
     if not path:
-        raise record.RecordError(f"no .runs directory in the repository that holds '{where}'")
+        raise record.RecordError(f"no runs directory in the repository that holds '{where}'. If the "
+                                 f"runs were started with --runs-dir (or {record.RUNS_DIR_ENV}), "
+                                 "give the same directory again")
     return path
 
 
@@ -361,10 +377,11 @@ def cmd_runs(args):
         return fail(str(exc))
     if not runs:
         return fail(f"no runs of workflow '{name}'")
-    print(f"{'run':<28} {'status':<12} {'known spend':>11}  started")
+    width = max(28, *(len(r[1]) for r in runs))
+    print(f"{'run':<{width}} {'status':<12} {'known spend':>11}  started")
     for _wf, run_name, path in runs:
         run = record.Run.load(path)
-        print(f"{run_name:<28} {run.state['status']:<12} "
+        print(f"{run_name:<{width}} {run.state['status']:<12} "
               f"{'$%.2f' % run.state['spend']['known_usd']:>11}  {run.info['started']}")
     return EXIT_OK
 

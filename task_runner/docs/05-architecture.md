@@ -303,11 +303,12 @@ checking that each set-aside task still has its `failed.patch`. Refs of unfinish
 
 ### Clarifications settled while building stage 2
 
-- **`.runs/`, the lock and the qualification cache live at the top of the git repository**, even
+- **`.runs/` (or the directory named with `--runs-dir` / `TASK_RUNNER_RUNS_DIR`), the lock and the
+  qualification cache belong to the git repository, by default at its top**, even
   when a workflow's `root` is a subdirectory of it. The lock, the pinned refs and `prune` are per
   repository. Paths inside `gitops` are relative to the repository top; the engine translates task
   paths, which are relative to `root`.
-- `refs/task-runner/<run>/` is keyed by the run **directory name** (`<stamp>-<uuid8>`), so `prune`
+- `refs/task-runner/<run>/` is keyed by the run **directory name** (`<workflow>-<stamp>-<uuid8>`), so `prune`
   can match a ref to its directory.
 - **The owner's git hooks never run**: every git call the runner makes sets `core.hooksPath` to
   `/dev/null`. A pre-commit hook must not be able to change or block an accepted commit.
@@ -422,6 +423,9 @@ runner prune                          delete the pinned refs of finished or dele
 ```
 
 `RUN` is a directory name, a UUID prefix, or `latest`.
+
+`runner --runs-dir DIR COMMAND …` keeps the record in `DIR` instead of `.runs/`; the option comes
+before the command and every later command on those runs needs it too (see 04, Where it lives).
 
 | Exit | Meaning |
 |---|---|

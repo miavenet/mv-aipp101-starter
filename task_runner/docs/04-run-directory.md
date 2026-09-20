@@ -4,6 +4,16 @@ One directory per run (D2, D11). It is laid out like a build directory: everythi
 the way is kept, in a fixed hierarchy, and nothing in it is needed to understand the repository
 itself. Deliverables live in the repository (D3); this is the record of how they came to be.
 
+## Where it lives
+
+By default the record is `.runs/` at the top of the repository. `runner --runs-dir DIR COMMAND`
+keeps it in `DIR` instead (relative to the current directory); so does the environment variable
+`TASK_RUNNER_RUNS_DIR` (relative to the top of the repository). The directory ignores itself
+wherever it is, so it may sit inside the repository under a visible name such as `runs/`. The
+location is not stored anywhere: every later command on those runs (`status`, `resume`, `approve`,
+`prune`, …) must be given the same directory. A run directory carries its workflow's name and the
+first eight characters of its UUID, the same pair as its branch `run/<workflow>-<uuid8>`.
+
 ## Layout
 
 ```
@@ -12,7 +22,7 @@ itself. Deliverables live in the repository (D3); this is the record of how they
   README.md                           explains this layout, once, for any person or agent
   <workflow>/
     latest                            text file: the newest run's directory name
-    20260919T201500Z-1a2b3c4d/        <UTC start>-<first 8 of the run UUID>
+    book-module-20260919T201500Z-1a2b3c4d/   <workflow>-<UTC start>-<first 8 of the run UUID>
       run.json                        identity and totals
       STATUS.md                       the run in words. Regenerated on every state change
       index.json                      what every file and directory here is

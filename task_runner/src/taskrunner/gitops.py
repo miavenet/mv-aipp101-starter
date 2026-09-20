@@ -160,10 +160,16 @@ class Git:
         """Directories below the top that hold their own `.git`. `git add` would turn them into
         submodule entries, or fail outright when they have no commit, so look before a snapshot."""
         found = []
+        runs_override = os.environ.get("TASK_RUNNER_RUNS_DIR", "")
+        if runs_override:
+            runs_override = os.path.realpath(os.path.join(self.top, os.path.expanduser(runs_override)))
         for dirpath, dirnames, filenames in os.walk(self.top):
             rel = os.path.relpath(dirpath, self.top)
             if rel == ".":
                 dirnames[:] = [d for d in dirnames if d not in (".git", ".runs")]
+                continue
+            if runs_override and os.path.realpath(dirpath) == runs_override:
+                dirnames[:] = []                          # a relocated runs directory (--runs-dir)
                 continue
             if ".git" in dirnames or ".git" in filenames:
                 found.append(rel)

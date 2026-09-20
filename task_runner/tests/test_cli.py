@@ -6,9 +6,10 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import unittest
 
-from helpers import RepoCase, git, run_cli
+from helpers import RUNNER, RepoCase, git, run_cli
 
 WORKFLOW = """
 name = "demo"
@@ -148,6 +149,26 @@ class Runs(RepoCase):
             self.assertEqual(fh.read().strip(), second)
         ids = [self.run_info(d)["run_id"] for d in (first, second)]
         self.assertNotEqual(ids[0], ids[1])
+
+    def test_runs_dir_option_relocates_the_record(self):
+        """run: --runs-dir keeps the record in a named directory; later commands need it too"""
+        res = run_cli("--runs-dir", os.path.join(self.root, "artifacts"), "start", self.wf)
+        self.assertEqual(res.returncode, 255, res.stderr)
+        name = re.search(r"^run (\S+)", res.stdout, re.M).group(1)
+        self.assertRegex(name, r"^demo-\d{8}T\d{6}Z-[0-9a-f]{8}$")
+        self.assertTrue(os.path.isfile(os.path.join(self.root, "artifacts", "demo", name, "run.json")))
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".runs")))
+        self.assertEqual(gitout(self.root, "status", "--porcelain"), "")     # it ignores itself
+        found = run_cli("--runs-dir", "artifacts", "status", cwd=self.root)   # relative to cwd
+        self.assertEqual(found.returncode, 0, found.stderr)
+        self.assertIn("demo", found.stdout)
+        lost = run_cli("status", "-C", self.root)
+        self.assertEqual(lost.returncode, 2)
+        self.assertIn("--runs-dir", lost.stderr)
+        env = dict(os.environ, TASK_RUNNER_RUNS_DIR="artifacts")              # relative to the top
+        via_env = subprocess.run([sys.executable, RUNNER, "status", "-C", self.root],
+                                 capture_output=True, text=True, env=env)
+        self.assertEqual(via_env.returncode, 0, via_env.stderr)
 
     def test_the_run_branch_is_checked_out(self):
         """git: the run branch is checked out (GIT-14)"""

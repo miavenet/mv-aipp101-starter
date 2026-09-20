@@ -91,7 +91,7 @@ class Creation(RunCase):
             self.assertEqual(fh.read(), "*\n")
         with open(os.path.join(runs, "README.md")) as fh:
             self.assertIn("state.json", fh.read())
-        self.assertRegex(os.path.basename(p), r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
+        self.assertRegex(os.path.basename(p), r"^demo-\d{8}T\d{6}Z-[0-9a-f]{8}$")
         with open(os.path.join(runs, "demo", "latest")) as fh:
             self.assertEqual(fh.read().strip(), os.path.basename(p))
         info = record.read_json(os.path.join(p, "run.json"))

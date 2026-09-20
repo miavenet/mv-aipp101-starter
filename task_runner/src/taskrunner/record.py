@@ -18,6 +18,7 @@ import uuid
 from . import __version__, gitops
 
 RUNS_DIR = ".runs"
+RUNS_DIR_ENV = "TASK_RUNNER_RUNS_DIR"         # set by `runner --runs-dir DIR`, or exported by the owner
 LOCK_FILE = "lock"
 STATE_VERSION = 1
 FINISHED_STATUSES = ("done",)
@@ -230,6 +231,10 @@ This directory is written by the task runner. It is the record of how work in th
 to be: every run, every task, every attempt, every prompt, every answer, every review finding. The
 deliverables themselves are **not** here; they are in the repository, on the run's git branch.
 
+By default this directory is `.runs/` at the top of the repository. `runner --runs-dir DIR ...`,
+or the environment variable `TASK_RUNNER_RUNS_DIR`, puts it elsewhere; every later command on
+these runs then needs the same setting.
+
 Nothing in here is tracked by git (`.gitignore` holds `*`). Committing a run's record is the
 owner's choice. A finished run can be deleted with `rm -rf`; `runner prune` then removes the git
 refs it pinned under `refs/task-runner/`.
@@ -246,7 +251,7 @@ rather than guessing from file names.
       qualification-cache.json      what `doctor` established about each agent profile
       <workflow>/
         latest                      text file: the directory name of the newest run
-        <UTC start>-<uuid8>/        one run
+        <workflow>-<UTC start>-<uuid8>/   one run
           run.json                  identity: run id, workflow, root, branch, base commit; totals
           STATUS.md                 the run in words. Regenerated on every state change
           index.json                what every file and directory here is
@@ -304,11 +309,17 @@ is wrong. 255: a person is needed.
 
 
 def runs_dir_for(top):
+    """Where the record of this repository's runs lives: `.runs/` at its top, unless the owner
+    named another directory. A relative override is relative to the top of the repository."""
+    override = os.environ.get(RUNS_DIR_ENV, "")
+    if override:
+        return os.path.normpath(os.path.join(top, os.path.expanduser(override)))
     return os.path.join(top, RUNS_DIR)
 
 
 def ensure_runs_dir(top):
-    """`.runs/` lives at the top of the repository, ignores itself and explains itself."""
+    """The runs directory (`.runs/` at the top of the repository by default) ignores itself and
+    explains itself."""
     path = runs_dir_for(top)
     os.makedirs(path, exist_ok=True)
     for name, text in ((".gitignore", "*\n"), ("README.md", README)):
@@ -320,7 +331,7 @@ def ensure_runs_dir(top):
 
 
 def find_runs_dir(start):
-    """The `.runs/` of the repository that holds `start`, or None."""
+    """The runs directory of the repository that holds `start`, or None."""
     top = gitops.find_toplevel(start)
     path = runs_dir_for(top) if top else ""
     return path if path and os.path.isdir(path) else None
@@ -339,7 +350,17 @@ def list_runs(runs_dir, workflow=None):
             path = os.path.join(wf_dir, name)
             if os.path.isfile(os.path.join(path, "run.json")):
                 found.append((wf, name, path))
-    return sorted(found, key=lambda r: (r[1], r[0]))
+    return sorted(found, key=_run_order)
+
+
+def _run_order(found):
+    """Oldest first. The start time is in run.json; the directory name no longer begins with it."""
+    wf, name, path = found
+    try:
+        started = read_json(os.path.join(path, "run.json")).get("started", "")
+    except (OSError, ValueError):
+        started = ""
+    return (started, name, wf)
 
 
 def resolve_run(runs_dir, ref="latest", unfinished_only=False):
@@ -394,7 +415,7 @@ class Run:
         runs = ensure_runs_dir(git.top)
         wf_dir = os.path.join(runs, wf.name)
         os.makedirs(wf_dir, exist_ok=True)
-        name = f"{_utc_stamp(now)}-{run_id[:8]}"
+        name = f"{wf.name}-{_utc_stamp(now)}-{run_id[:8]}"
         path = os.path.join(wf_dir, name)
         os.mkdir(path)                                   # exclusive: never reuse a run directory
 

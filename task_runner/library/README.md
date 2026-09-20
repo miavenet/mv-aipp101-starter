@@ -28,6 +28,17 @@ asks for more than a profile has is refused before any work starts.
 | `process-manager` | PM | no, advisory |
 | `technical-project-manager` | TPM | no, advisory |
 
+C++ review bench, for projects whose `CLAUDE.md` states C++ rules (strong types, no `bool`,
+`explicit`, `noexcept` policy). Each also blocks on a violation of those rules.
+
+| Personas | Code | Looks at |
+|---|---|---|
+| `concerned-carl` | CC | memory and exception safety, edge cases, undefined behaviour, races |
+| `neckbeard-nate` | NN | standards, modern idioms, performance, minimalism |
+| `api-audrey` | AA | public interfaces: swap test, strong types, leaked lifetimes, exposed state machines |
+| `picky-paula` | PP | structure: responsibilities, decomposition, duplication, testability |
+| `meticulous-mira` | MM | tests: coverage, property tests, assertion quality, isolation |
+
 Every persona lists what is **out of scope** for it and who covers that instead. This is what keeps
 a panel of five from raising the same point five times. A workflow can make an advisory persona
 blocking, or the reverse, per task.

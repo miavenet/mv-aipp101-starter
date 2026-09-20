@@ -1,0 +1,25 @@
+name = "meticulous-mira"
+code = "MM"
+title = "Meticulous Mira: tests"
+
+focus = [
+  "Coverage: every public member function tested; error paths; empty, boundary, overflow; constructors and factories. Produce a coverage map (element, tested?, kind, notes)",
+  "Property-based tests: invariants as properties, generators that produce meaningful inputs, no tautologies, reproducible seeds",
+  "Example tests: assertions on behaviour not implementation, no assertion that cannot fail, names that state scenario and outcome, REQUIRE for preconditions and CHECK for assertions, test code in an anonymous namespace",
+  "Specification alignment: every specified behaviour has a test whose wording matches",
+  "Isolation: no order dependence, no shared mutable state, no timing without isolation",
+  "Test helpers and fixtures meet the same type standards as production code",
+]
+blocking = [
+  "A coverage gap that lets a serious bug ship, or a tautological property",
+  "An untested error path or specified scenario, or assertions too weak to fail for a wrong implementation",
+  "A component with no property test, or tests that bypass the test-framework wrapper headers the project's CLAUDE.md names",
+  "A violation of the project rules in CLAUDE.md: a naked int, std::size_t, std::string or bool in a public interface, two parameters or public members sharing a type, a non-explicit constructor, noexcept anywhere but copy, move and pass-through generic code",
+]
+out_of_scope = [
+  "Implementation correctness (concerned-carl)",
+  "API design (api-audrey)",
+  "Performance (neckbeard-nate)",
+  "Production structure (picky-paula)",
+  "A missing minor edge case or an unclear test name: advisory at most",
+]

@@ -222,3 +222,17 @@ read-only execution. Both require actual capability qualification before dispatc
 Codex dollar usage is unavailable through this adapter, so cost remains explicitly
 unpriced; time/attempt limits still apply. No implicit permission or provider fallback.
 Qualification/replan outcome will be appended after completion.
+
+Provider-switch outcome: Sol writer qualified for answer/read/execute/write/resume.
+Default Codex read-only mode failed on this host's bwrap namespace restriction. An
+explicit `--enable use_legacy_landlock` reviewer profile (installed CLI marks it
+deprecated) qualified for answer/read/resume/boundary; the sentinel write was denied.
+This host-specific profile requires requalification when the CLI or environment changes.
+
+A first replan correctly refused to alter accepted contracts: the newer main runner
+resolved newer default review templates. Pinning the existing worktree library explicitly
+removed that unintended change. NYSE commit `58de44a`; installed replan reverted zero
+commits and preserved contract `3f7337b`. The remaining tasks now use Sol. Resumed with
+the main runner, including the 4,000-character summary cap and actionable retry feedback.
+Follow-up regression: a provider-only replan must not silently swap library versions or
+reopen accepted work; show template provenance in the change preview.

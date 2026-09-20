@@ -1,0 +1,103 @@
+# Spec phase of the runner-gaps work: one design document per gap, each reviewed by Codex Astra.
+# The implementation workflow is written from the accepted documents, after this run is done.
+# Run from this worktree with:  task_runner/runner --runs-dir runs <command> workflows/runner-gaps-spec.toml
+
+name = "runner-gaps-spec"
+root = ".."
+library = ["../task_runner/library"]        # pin this worktree's library (lesson from the NYSE replan)
+
+[defaults]
+agent = "claude"
+complexity = "high"
+max_attempts = 3
+timeout_min = 40
+budget_usd = 8.0
+run_budget_usd = 60.0
+protected = ["task_runner/src/**", "task_runner/tests/**", "task_runner/library/**", "task_runner/docs/0*", "task_runner/docs/runbook.md", "task_runner/docs/tutorial/**", "workflows/**"]
+
+[model_policy.high]
+claude = "claude-opus-5"
+codex = "gpt-6-astra"
+
+# Codex reviewer profile that qualified on this host (the default read-only sandbox fails under
+# this container's bwrap restriction). Codex reports no dollar cost: its calls are unpriced.
+[agents.astra-review]
+kind = "codex"
+sandbox = "read-only"
+ignore_user_config = true
+extra_args = ["--enable", "use_legacy_landlock", "-c", 'model_reasoning_effort="high"']
+
+[[task]]
+id = "g1"
+type = "design"
+title = "Spec: G1 — Set-aside work cannot be recovered after a replan"
+prompt = """Design gap G1 only: "G1 — Set-aside work cannot be recovered after a replan". The full brief, with the evidence, the requirements, what you must decide, the required sections and the constraints, is the tracked file workflows/runner-gaps/spec-brief.md. Read all of it, then the documents and modules it names, then write the one document declared as your output."""
+outputs = ["task_runner/docs/design/runner-gaps/G1-recover-set-aside-work.md"]
+gate = [{ run = "workflows/runner-gaps/check_spec.sh task_runner/docs/design/runner-gaps/G1-recover-set-aside-work.md", new = true, fail_pattern = "missing document" }]
+reviewers = [
+  { perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+  { perspective = "spec-compliance", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+]
+
+[task.params]
+audience = "the engineer who will implement it unattended, and a reviewer who was not there when the gap was found"
+
+[[task]]
+id = "g2"
+type = "design"
+title = "Spec: G2 — A sound review is discarded because of a malformed sibling field"
+prompt = """Design gap G2 only: "G2 — A sound review is discarded because of a malformed sibling field". The full brief, with the evidence, the requirements, what you must decide, the required sections and the constraints, is the tracked file workflows/runner-gaps/spec-brief.md. Read all of it, then the documents and modules it names, then write the one document declared as your output."""
+outputs = ["task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md"]
+gate = [{ run = "workflows/runner-gaps/check_spec.sh task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md", new = true, fail_pattern = "missing document" }]
+reviewers = [
+  { perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+  { perspective = "spec-compliance", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+]
+
+[task.params]
+audience = "the engineer who will implement it unattended, and a reviewer who was not there when the gap was found"
+
+[[task]]
+id = "g3"
+type = "design"
+title = "Spec: G3 — Native Claude hook activity is empty on this host"
+prompt = """Design gap G3 only: "G3 — Native Claude hook activity is empty on this host". The full brief, with the evidence, the requirements, what you must decide, the required sections and the constraints, is the tracked file workflows/runner-gaps/spec-brief.md. Read all of it, then the documents and modules it names, then write the one document declared as your output."""
+outputs = ["task_runner/docs/design/runner-gaps/G3-claude-activity.md"]
+gate = [{ run = "workflows/runner-gaps/check_spec.sh task_runner/docs/design/runner-gaps/G3-claude-activity.md", new = true, fail_pattern = "missing document" }]
+reviewers = [
+  { perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+  { perspective = "spec-compliance", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+]
+
+[task.params]
+audience = "the engineer who will implement it unattended, and a reviewer who was not there when the gap was found"
+
+[[task]]
+id = "g4"
+type = "design"
+title = "Spec: G4 — Interrupted and failed calls leave spend unknown"
+prompt = """Design gap G4 only: "G4 — Interrupted and failed calls leave spend unknown". The full brief, with the evidence, the requirements, what you must decide, the required sections and the constraints, is the tracked file workflows/runner-gaps/spec-brief.md. Read all of it, then the documents and modules it names, then write the one document declared as your output."""
+outputs = ["task_runner/docs/design/runner-gaps/G4-unknown-spend.md"]
+gate = [{ run = "workflows/runner-gaps/check_spec.sh task_runner/docs/design/runner-gaps/G4-unknown-spend.md", new = true, fail_pattern = "missing document" }]
+reviewers = [
+  { perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+  { perspective = "spec-compliance", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+]
+
+[task.params]
+audience = "the engineer who will implement it unattended, and a reviewer who was not there when the gap was found"
+
+[[task]]
+id = "g5"
+type = "design"
+title = "Spec: G5 — check-gates re-fetches and rebuilds the world for every gate"
+prompt = """Design gap G5 only: "G5 — check-gates re-fetches and rebuilds the world for every gate". The full brief, with the evidence, the requirements, what you must decide, the required sections and the constraints, is the tracked file workflows/runner-gaps/spec-brief.md. Read all of it, then the documents and modules it names, then write the one document declared as your output."""
+outputs = ["task_runner/docs/design/runner-gaps/G5-preflight-reuse.md"]
+gate = [{ run = "workflows/runner-gaps/check_spec.sh task_runner/docs/design/runner-gaps/G5-preflight-reuse.md", new = true, fail_pattern = "missing document" }]
+reviewers = [
+  { perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+  { perspective = "spec-compliance", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+]
+
+[task.params]
+audience = "the engineer who will implement it unattended, and a reviewer who was not there when the gap was found"

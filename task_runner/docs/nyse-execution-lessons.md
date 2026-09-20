@@ -210,3 +210,15 @@ candidate and attempt allowance, and wait for explicit retry or a bounded reset 
 Test: a quota response causes no immediate identical retries, no acceptance, no lost
 artifact, and clearly identified provider-blocked status; unknown cost stays unknown.
 Do not silently switch provider or permission profile as a quota workaround.
+
+### Provider-switch recovery — requested Codex Sol
+
+The user explicitly requested headless Codex Sol instead of Opus after R07. Revised
+workflow definitions retain the accepted contract and its original reviewers unchanged;
+only unfinished tasks select `gpt-5.6-sol`. NYSE commit `6182333` retains the two latest
+scenario drafts in the frozen brief and requests focused completion rather than rewriting.
+Writer profile uses the already-authorized unattended mode; reviewer profile specifies
+read-only execution. Both require actual capability qualification before dispatch.
+Codex dollar usage is unavailable through this adapter, so cost remains explicitly
+unpriced; time/attempt limits still apply. No implicit permission or provider fallback.
+Qualification/replan outcome will be appended after completion.

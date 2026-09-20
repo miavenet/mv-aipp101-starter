@@ -257,6 +257,20 @@ class Restore(GitCase):
         self.assertFalse(os.path.exists(self.path("vendor")))
         self.assertEqual(self.snap(), base)
 
+    def test_an_ignored_embedded_repository_is_left_alone(self):
+        """git: a fetched dependency in an ignored build directory is not an unsupported entry"""
+        with open(self.path(".gitignore"), "w") as fh:
+            fh.write(".build/\n")
+        base = self.snap()
+        os.makedirs(self.path(".build/debug/_deps/dep-src"))
+        git(self.path(".build/debug/_deps/dep-src"), "init", "-q")
+        os.makedirs(self.path("src/nested"))
+        git(self.path("src/nested"), "init", "-q")
+        self.assertEqual(self.g.embedded_repositories(), ["src/nested"])
+        self.g.remove_embedded("src/nested")
+        self.assertEqual(self.snap(), base)                          # the ignored one changes nothing
+        self.assertTrue(os.path.isdir(self.path(".build/debug/_deps/dep-src/.git")))
+
     def test_gitlinks_in_a_tree_are_reported(self):
         os.makedirs(self.path("nested"))
         git(self.path("nested"), "init", "-q")

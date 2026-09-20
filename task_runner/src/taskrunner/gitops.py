@@ -158,7 +158,9 @@ class Git:
 
     def embedded_repositories(self):
         """Directories below the top that hold their own `.git`. `git add` would turn them into
-        submodule entries, or fail outright when they have no commit, so look before a snapshot."""
+        submodule entries, or fail outright when they have no commit, so look before a snapshot.
+        One that git ignores is left alone: `git add` never sees it, and it is usually a build
+        directory's fetched dependency (CMake FetchContent clones into the build tree)."""
         found = []
         runs_override = os.environ.get("TASK_RUNNER_RUNS_DIR", "")
         if runs_override:
@@ -174,7 +176,8 @@ class Git:
             if ".git" in dirnames or ".git" in filenames:
                 found.append(rel)
                 dirnames[:] = []
-        return sorted(found)
+        ignored = self.check_ignored([rel + "/" for rel in found])
+        return sorted(rel for rel in found if rel + "/" not in ignored)
 
     def gitlinks(self, tree):
         """Paths in `tree` that are submodule entries or embedded repositories (mode 160000)."""

@@ -1,0 +1,38 @@
+# Example plan. Check it with:  python3 research/task_runner/prototype/runner.py validate research/task_runner/prototype/example-plan.toml
+name = "example"
+root = "../../.."                       # the repository the agents work in, relative to this file
+
+[defaults]                           # every key is optional; these are the built-in values
+agent = "claude"                     # claude | codex | any name defined under [agents]
+reviewer = ""                        # empty: the same agent, in a new session
+review = true
+human_review = false
+max_attempts = 3
+timeout_min = 30
+gate_timeout_min = 20
+budget_usd = 5.0
+run_budget_usd = 50.0
+commit = true
+branch = ""                          # for example "run/example"; empty commits on the current branch
+protected = []                       # for example ["tests/fixtures/*", "docs/design/*"]
+
+# Any other agent: a program that reads the prompt on stdin and prints its answer.
+# [agents.gemini]
+# type = "command"
+# argv = ["gemini", "-p"]
+# model_args = ["--model", "{model}"]
+
+[[task]]
+id = "hello"
+title = "Add a hello script"
+prompt = "Create scripts/hello.sh that prints 'hello'. Make it executable."
+gate = "test \"$(scripts/hello.sh)\" = hello"
+
+[[task]]
+id = "hello-name"
+title = "Greet by name"
+needs = ["hello"]
+agent = "codex"                      # any key from [defaults] can be set per task
+reviewer = "claude"
+prompt = "Make scripts/hello.sh greet its first argument when one is given: 'hello, NAME'."
+gate = ["test \"$(scripts/hello.sh)\" = hello", "test \"$(scripts/hello.sh Ada)\" = 'hello, Ada'"]

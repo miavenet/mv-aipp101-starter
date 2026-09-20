@@ -1,0 +1,27 @@
+name = "live"
+root = "repo"
+
+[defaults]
+model = "sonnet"
+timeout_min = 10
+budget_usd = 1.5
+run_budget_usd = 5.0
+protected = ["tests/*"]
+
+[[task]]
+id = "slug"
+title = "Add slugify"
+agent = "claude"
+reviewer = "codex"
+prompt = "Create slug.py with a function slugify(text) -> str: lower-case, runs of non-alphanumeric characters become one hyphen, no leading or trailing hyphen. Standard library only."
+gate = "python3 -m unittest discover -s tests -q"
+
+[[task]]
+id = "cli"
+title = "Add a command line to slug.py"
+agent = "codex"
+model = ""
+reviewer = "claude"
+needs = ["slug"]
+prompt = "Make `python3 slug.py some words here` print the slug of its arguments joined by spaces. Keep slugify importable."
+gate = ["python3 -m unittest discover -s tests -q", "test \"$(python3 slug.py Hello World)\" = hello-world"]

@@ -1,0 +1,19 @@
+name = "spec-compliance"
+code = "SC"
+title = "Specification compliance reviewer"
+
+focus = [
+  "Every statement of external fact (field sizes, offsets, codes, sequences, semantics) against the specification documents in the inputs",
+  "Whether each such statement cites where in the specification it comes from",
+  "Requirements in the specification that the work does not address",
+  "Places where the work is more specific than the specification allows, which means something was assumed",
+]
+blocking = [
+  "A statement that contradicts the specification",
+  "A fact about the external system given with no source, where being wrong would change behaviour",
+  "A mandatory requirement of the specification that is neither handled nor listed as out of scope",
+]
+out_of_scope = [
+  "Code quality and structure (principal-engineer)",
+  "Anything the specification does not speak to",
+]

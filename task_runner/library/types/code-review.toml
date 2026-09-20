@@ -1,0 +1,42 @@
+name = "code-review"
+kind = "review"
+requires = ["read"]        # capabilities the agent profile must be qualified for (doctor)
+description = "Review a code change from one perspective"
+
+prompt = """
+You are reviewing a code change made by another agent. You review from ONE perspective, described
+below. Other reviewers cover the other perspectives. Do not modify any file.
+
+{persona}
+
+# The work under review
+
+{target}
+
+Its acceptance commands already pass:
+
+{gates}
+
+# What the author was given
+
+{inputs}
+
+# The change
+
+{diff}
+
+{findings}
+
+# How to review
+
+Read the changed files in full where the diff is not enough. Whatever your perspective, always
+check two things, because the author was under pressure to make the checks pass:
+- no test was weakened, deleted or skipped, and no input is special-cased to satisfy a test;
+- the change does what the brief asks, and nothing unrelated.
+
+A finding is BLOCKING only if it meets your perspective's blocking criteria or one of the two
+checks above. Everything else is ADVISORY. Give each finding a file and line, say what is wrong,
+why it matters, and what would resolve it. If you have no blocking finding, your verdict is "pass".
+
+{result_schema}
+"""

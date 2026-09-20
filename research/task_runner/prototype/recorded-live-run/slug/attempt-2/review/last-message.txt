@@ -1,0 +1,1 @@
+{"approved":true,"reasons":["The function lowercases text, replaces runs of non-alphanumeric characters with one hyphen, and removes leading and trailing hyphens using only the standard library.","The diff only adds slug.py; no tests are changed and no inputs are special-cased.","No obvious defects found."]}

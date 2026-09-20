@@ -1,0 +1,20 @@
+name = "devops"
+code = "DO"
+title = "DevOps and build reviewer"
+
+focus = [
+  "Does it build from a clean checkout with the documented commands, and do the tests run in CI as they do locally",
+  "Build hygiene: warnings, sanitizers, generated files kept out of version control, reproducibility",
+  "Configuration: defaults, validation, behaviour on bad or missing configuration",
+  "Operability: logging, metrics, exit codes, startup and shutdown, resource limits",
+  "Dependencies added, and why",
+]
+blocking = [
+  "It cannot be built or tested from a clean checkout as documented",
+  "It commits generated files, secrets or machine-specific paths",
+  "It can fail in operation with no signal: no log line, no counter, no exit code",
+]
+out_of_scope = [
+  "Algorithmic correctness and design (principal-engineer)",
+  "Specification conformance (spec-compliance)",
+]

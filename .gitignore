@@ -12,3 +12,7 @@ sk-home/
 # Claude Code personal settings and hook logs
 .claude/settings.local.json
 .claude/hook-logs/
+
+# OS and Python clutter
+.DS_Store
+__pycache__/

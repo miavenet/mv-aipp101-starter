@@ -1,0 +1,197 @@
+{
+  "checked_on": "2026-09-19",
+  "scope": "Direct retrieval metadata only. Browser content validation and excluded discovery leads are documented in SOURCES.md. HTTP failures here do not imply browser retrieval failed.",
+  "records": [
+    {
+      "id": "fix-guide",
+      "url": "https://dev.fixtrading.org/implementation-guide/",
+      "error": "<urlopen error [Errno -2] Name or service not known>"
+    },
+    {
+      "id": "hkex-index",
+      "url": "https://www.hkex.com.hk/OMDC?sc_lang=en",
+      "final_url": "https://www.hkex.com.hk/OMDC?sc_lang=en",
+      "status": 200,
+      "bytes": 380380,
+      "sha256": "9e16f072ee7ae29e893b968b4c471279c9b3ec6f536085d284ebfdbad6ca2608",
+      "content_type": "text/html; charset=utf-8"
+    },
+    {
+      "id": "hkex-procedures",
+      "url": "https://www.hkex.com.hk/-/media/HKEX-Market/Services/Market-Data-Services/Infrastructure/HKEX-Orion-Market-Data-Platform-Securities-Market-OMD-C/OMDC-Readiness-Test-Procedures-%28Version-1%2C-d-%2C10a%29.pdf",
+      "final_url": "https://www.hkex.com.hk/-/media/HKEX-Market/Services/Market-Data-Services/Infrastructure/HKEX-Orion-Market-Data-Platform-Securities-Market-OMD-C/OMDC-Readiness-Test-Procedures-%28Version-1%2C-d-%2C10a%29.pdf",
+      "status": 200,
+      "bytes": 369977,
+      "sha256": "430baaad1ee9d5541f78ac37768794655898adaca6651829a999317c12d82d2d",
+      "content_type": "application/pdf"
+    },
+    {
+      "id": "hkex-tools",
+      "url": "https://www.hkex.com.hk/-/media/HKEX-Market/Services/Market-Data-Services/Infrastructure/OMD_Onboarding_Tools_User_Guide_3_1.pdf",
+      "final_url": "https://www.hkex.com.hk/-/media/HKEX-Market/Services/Market-Data-Services/Infrastructure/OMD_Onboarding_Tools_User_Guide_3_1.pdf",
+      "status": 200,
+      "bytes": 1553481,
+      "sha256": "621c6a5ebe1d5c4cf7482d023c4f410428e204a214a0a2ab43b2b2dd20e05129",
+      "content_type": "application/pdf"
+    },
+    {
+      "id": "nyse-otc-index",
+      "url": "https://www.nyse.com/data-products/catalog/global-otc",
+      "final_url": "https://www.nyse.com/data-products/catalog/global-otc",
+      "status": 200,
+      "bytes": 75181,
+      "sha256": "b28e61b8462b486b51cb4621be73b3a1da34eb073b48703484a2ca972aed3e55",
+      "content_type": "text/html; charset=utf-8"
+    },
+    {
+      "id": "quickfix-tests",
+      "url": "https://api.github.com/repos/quickfix/quickfix/contents/test/definitions/server",
+      "final_url": "https://api.github.com/repos/quickfix/quickfix/contents/test/definitions/server",
+      "status": 200,
+      "bytes": 8606,
+      "sha256": "2c4444af3e97e5d08357cf129d8efd1f02c142f6fab232bf681c096bfe5e569d",
+      "content_type": "application/json; charset=utf-8",
+      "entries": [
+        "Makefile.am",
+        "fix40",
+        "fix41",
+        "fix42",
+        "fix43",
+        "fix44",
+        "fix50",
+        "fix50sp1",
+        "fix50sp2",
+        "future",
+        "validate"
+      ]
+    },
+    {
+      "id": "hkex-answer-book",
+      "url": "https://www.hkex.com.hk/-/media/HKEX-Market/Services/Market-Data-Services/Infrastructure/HKEX-Orion-Market-Data-Platform-Securities-Market-OMD-C/OMDC-Readiness-Test-Answer-Book-%28Version-2%2C-d-%2C10%29.xlsx",
+      "final_url": "https://www.hkex.com.hk/-/media/HKEX-Market/Services/Market-Data-Services/Infrastructure/HKEX-Orion-Market-Data-Platform-Securities-Market-OMD-C/OMDC-Readiness-Test-Answer-Book-%28Version-2%2C-d-%2C10%29.xlsx",
+      "status": 200,
+      "bytes": 277241,
+      "sha256": "f2b8f16f3170bc65ed2f0b9d772345797ca1621517645cf88be0ef3d2ad802a5",
+      "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    },
+    {
+      "id": "nyse-otc-instructions",
+      "url": "https://www.nyse.com/publicdocs/nyse/data/Global-OTC-Testing-Instructions.docx",
+      "final_url": "https://www.nyse.com/publicdocs/nyse/data/Global-OTC-Testing-Instructions.docx",
+      "status": 200,
+      "bytes": 46799,
+      "sha256": "4a85025f5075862d8ce49ed546dd48004554c8bb038e7db47c5bfc0bf085630f",
+      "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+    {
+      "id": "nyse-otc-binary",
+      "url": "https://www.nyse.com/publicdocs/nyse/data/GlobalOTC_Replay_IBF.bin",
+      "final_url": "https://www.nyse.com/publicdocs/nyse/data/GlobalOTC_Replay_IBF.bin",
+      "status": 200,
+      "bytes": 5974,
+      "sha256": "28ccd5cd2952bb972e40a4fb74236586998c2164e3d69e40e2ac96d801a58ceb",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "id": "quickfix-fix44",
+      "url": "https://api.github.com/repos/quickfix/quickfix/contents/test/definitions/server/fix44",
+      "final_url": "https://api.github.com/repos/quickfix/quickfix/contents/test/definitions/server/fix44",
+      "status": 200,
+      "bytes": 62088,
+      "sha256": "a00c3d0917b5e5fd99b5bbbef0b7a437e484c11fc0eaafe3a006e315048a78bc",
+      "content_type": "application/json; charset=utf-8"
+    },
+    {
+      "id": "fix-guide-main",
+      "url": "https://www.fixtrading.org/implementation-guide/",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "id": "quickfix-checksum",
+      "url": "https://raw.githubusercontent.com/quickfix/quickfix/master/test/definitions/server/fix44/3b_InvalidChecksum.def",
+      "final_url": "https://raw.githubusercontent.com/quickfix/quickfix/master/test/definitions/server/fix44/3b_InvalidChecksum.def",
+      "status": 200,
+      "bytes": 999,
+      "sha256": "dd7912f0c759525fa91ef3f656d5bfd1b77e3ed75231b4d174f8ef254d3d3383",
+      "content_type": "text/plain; charset=utf-8"
+    },
+    {
+      "id": "quickfix-resend",
+      "url": "https://raw.githubusercontent.com/quickfix/quickfix/master/test/definitions/server/fix44/20_SimultaneousResendRequest.def",
+      "final_url": "https://raw.githubusercontent.com/quickfix/quickfix/master/test/definitions/server/fix44/20_SimultaneousResendRequest.def",
+      "status": 200,
+      "bytes": 1659,
+      "sha256": "2377f57f1d2a236536634f30218f2a0e24b56f3c9e680eb64acd40d0724acf24",
+      "content_type": "text/plain; charset=utf-8"
+    },
+    {
+      "id": "cme-mdp3",
+      "url": "https://www.cmegroup.com/tools-information/webhelp/autocert-mdp3/Content/Autocert-MDP3-User-Manual.pdf",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "id": "cme-brokertec-recovery",
+      "url": "https://www.cmegroup.com/tools-information/webhelp/autocert-brokertec/Content/tcp.html",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "id": "cme-reset-update",
+      "url": "https://www.cmegroup.com/notices/electronic-trading/2026/08/20260810.html",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "id": "nyse-common",
+      "url": "https://www.nyse.com/publicdocs/nyse/data/NYSE_Pillar_Equities_Common_Client_Specification.pdf",
+      "final_url": "https://www.nyse.com/publicdocs/nyse/data/NYSE_Pillar_Equities_Common_Client_Specification.pdf",
+      "status": 200,
+      "bytes": 832305,
+      "sha256": "58d1d37396355c070d2e8504627f06992c074ace67303efad92e37efa52ed6b9",
+      "content_type": "application/pdf"
+    },
+    {
+      "id": "nyse-integrated",
+      "url": "https://www.nyse.com/publicdocs/nyse/data/NYSE_Pillar_Integrated_Feed_Client_Specification.pdf",
+      "final_url": "https://www.nyse.com/publicdocs/nyse/data/NYSE_Pillar_Integrated_Feed_Client_Specification.pdf",
+      "status": 200,
+      "bytes": 626971,
+      "sha256": "927fbc83c24b21a2b661f68751c54cbf37864fc75e0a35ad1e9413872852c100",
+      "content_type": "application/pdf"
+    },
+    {
+      "id": "nasdaq-recovery",
+      "url": "https://www.nasdaq.com/docs/ISEReplatformReleaseNotes.pdf",
+      "final_url": "https://www.nasdaq.com/docs/ISEReplatformReleaseNotes.pdf",
+      "status": 200,
+      "bytes": 387856,
+      "sha256": "1be2e4c1381deef3ab698c83129882c9e6811db158d025942f7fbd8244c4344c",
+      "content_type": "application/pdf"
+    },
+    {
+      "id": "nasdaq-ntf",
+      "url": "https://www.nasdaqtrader.com/Trader.aspx?id=TestingFacility",
+      "final_url": "https://www.nasdaqtrader.com/Trader.aspx?id=TestingFacility",
+      "status": 200,
+      "bytes": 54223,
+      "sha256": "30dd9cb123b37bf56f989dd655c2edb5a9cb5eca73f14d6edfda7177ebd4909c",
+      "content_type": "text/html; charset=utf-8"
+    },
+    {
+      "id": "nyse-otc-ascii",
+      "url": "https://www.nyse.com/publicdocs/nyse/data/GlobalOTC_Replay_IBF_Output.txt",
+      "final_url": "https://www.nyse.com/publicdocs/nyse/data/GlobalOTC_Replay_IBF_Output.txt",
+      "status": 200,
+      "bytes": 67177,
+      "sha256": "7660f63ab4252a64ea4e67302ce7a6db79f9f4b872a98effca86ed5adc6cd56f",
+      "content_type": "text/plain; charset=UTF-8"
+    },
+    {
+      "id": "nyse-spec-index",
+      "url": "https://www.nyse.com/market-data/technical-documents",
+      "final_url": "https://www.nyse.com/market-data/technical-documents",
+      "status": 200,
+      "bytes": 719070,
+      "sha256": "f04f64b5fc14398b9fcd904edd69365e64f8a98dc15ae8df4cca62f3c26d57c1",
+      "content_type": "text/html; charset=utf-8"
+    }
+  ]
+}

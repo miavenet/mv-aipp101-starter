@@ -5,11 +5,13 @@ it to completion with headless coding agents, and leaves a complete, navigable r
 that was done. Tasks can be of any type: design, implementation, tests, code review, design review,
 summaries, plain commands, human sign-off. The output of one stage feeds the next stage or stages.
 
-Status: **stages 1–4 implemented; 227 runner tests pass.** `start` and `resume` execute one producer
-transaction at a time using command, Claude Code or Codex agents, verified by gates, checks and
-human decisions. `doctor` qualifies each profile using observed effects and caches the results;
-`start` and `resume` enforce qualification. `check-gates` tests commands on disposable copies.
-Accepted commits contain exactly the verified candidate.
+Status: **stages 1–5 implemented.** `start` and `resume` execute one producer transaction at a
+time using command, Claude Code or Codex agents, verified by gates, checks, review panels and
+human decisions. Panels run read-only jobs up to `max_parallel`, apply findings in workflow order,
+and consolidate rework. `resolve` settles escalated findings; `resume --add-budget` continues a
+budget pause without repeating completed reviews. `doctor` qualifies profiles using observed
+effects; `check-gates` tests commands on disposable copies. Accepted commits contain exactly the
+verified candidate.
 
 Run the model-free tests from the repository root:
 
@@ -30,10 +32,11 @@ output and installed CLI help, without a live model call. The known Codex namesp
 failure is correctly classified as an environment failure, not successful or blocked task work.
 See [stage 4 compatibility and limits](docs/stage-4-compatibility.md).
 
-Review panels, findings and budget reservation arrive in stage 5; replan arrives in stage 6.
-The text-only evidence and single-review invocation helpers are implemented, but workflows with
-review tasks still stop before panel execution. The book-module example can be validated and
-graphed; full execution needs those later stages.
+For a review-panel example, copy [`panel-demo.toml`](examples/panel-demo.toml),
+[`panel_agent.py`](examples/panel_agent.py), and `command_agent.py` into a clean scratch Git
+repository. The [stage 5 walkthrough](docs/stage-5-walkthrough.md) captures automatic rework and a
+human-settled dispute. Stage 5's regression tests use scripted agents only. `replan` is next, in
+stage 6; live agent execution still requires successful qualification on the host and profile used.
 
 ## Read in this order
 

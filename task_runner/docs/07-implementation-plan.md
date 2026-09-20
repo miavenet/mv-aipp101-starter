@@ -1,7 +1,7 @@
 # 07 — Implementation plan
 
 Status: **the owner gave the go-ahead on 2026-09-19, after the adversarial review was answered
-(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is done: 116 tests pass in all, covering GIT-01 to GIT-16, REC-01 to REC-13 and RUN-01, 02, 07, 08, 11, 16, 17, several at primitive level until the engine exists. `start` creates a run and stops in stage 2. Stage 3 is now done: 196 tests pass; `command` agents, producer transactions, gates/checks, human decisions, resume and retry work end to end. Stage 4 is now done: 227 runner tests pass; headless adapters, observed capability qualification, caching and gate preflight are implemented. Stage 5 is next.** Progress is recorded in the
+(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is done: 116 tests pass in all, covering GIT-01 to GIT-16, REC-01 to REC-13 and RUN-01, 02, 07, 08, 11, 16, 17, several at primitive level until the engine exists. `start` creates a run and stops in stage 2. Stage 3 is now done: 196 tests pass; `command` agents, producer transactions, gates/checks, human decisions, resume and retry work end to end. Stage 4 is now done: 227 runner tests pass; headless adapters, observed capability qualification, caching and gate preflight are implemented. Stage 5 is now done: findings, panels, bounded parallel readers, resolution and budget pauses are implemented. Stage 6 is next.** Progress is recorded in the
 [task_runner README](../README.md).
 
 ## Approach
@@ -83,6 +83,19 @@ through the explicit text-only single-review helper; panel scheduling remains st
 [The stage 4 walkthrough](stage-4-walkthrough.md) records doctor, a cached doctor, check-gates and
 qualified producer execution. [Compatibility notes](stage-4-compatibility.md) identify the CLI
 versions checked, what was observed on this host, and what still needs live qualification.
+
+### Stage 5 completion (2026-09-20)
+
+Findings transitions are pure and atomic; panel results are applied in workflow order. Tests
+reverse reviewer completion order and assert identical ledgers and feedback while enforcing the
+parallelism limit. Per-reviewer diff bases span gate failures, advisory findings close immediately,
+and disputes hold the candidate until `resolve`. Budget reservations and completed reader outcomes
+are recorded together; budget resume and crash recovery do not repeat completed reviews. Native
+SIGTERM/SIGKILL tests cover parallel child cleanup and orphan refusal.
+
+The [stage 5 walkthrough](stage-5-walkthrough.md) records model-free rework and escalation through
+the CLI. Coverage is in `test_findings.py`, `test_panels.py`, `test_budgets.py` and
+`test_panel_processes.py`, alongside the earlier transaction and recovery suites.
 
 ### The scripted agent's contract (stage 3 onward)
 

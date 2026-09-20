@@ -1,9 +1,9 @@
 # Runbook
 
-Status: **partly verified at stage 4**. The [stage 4 CLI walkthrough](stage-4-walkthrough.md)
-exercises doctor, caching, gate preflight, start, rejection, rework, approval and resume with a
-model-free command agent. Recovery, retry, branch safety and process cleanup are covered by the
-runner tests. Panels, monetary budget reservation, `resolve` and `replan` remain later-stage work.
+Status: **partly verified at stage 5**. The [stage 4 CLI walkthrough](stage-4-walkthrough.md)
+exercises qualification, preflight and human tasks. The [stage 5 walkthrough](stage-5-walkthrough.md)
+exercises panels, rework and `resolve`; tests cover budget pauses, retry, branch safety and parallel
+process cleanup. `replan` remains stage 6 work.
 
 For the ideas behind these procedures, read the [tutorial](tutorial/README.md).
 
@@ -46,7 +46,7 @@ flowchart TB
 - **Do not edit the work tree or the run branch while a run is active or paused.** `resume` will
   refuse to continue if you did.
 
-## 3. Stops that need you — to verify at stages 3 and 5
+## 3. Stops that need you — verified through stage 5, except replan
 
 | STATUS.md says | Do |
 |---|---|
@@ -61,7 +61,7 @@ flowchart TB
 | Situation | Do |
 |---|---|
 | A task failed | Its work is in `tasks/NNN-task/failed.patch`, and the tree is back at the last accepted state. Read the last attempt's `gate.log`. `retry` clean, or `retry --apply-patch` to continue from the failed work |
-| Environment failure | Nothing was charged to any task. Fix the cause, `runner doctor WORKFLOW --force`, `resume` |
+| Environment failure | No producer attempt was used; any reported cost remains in the record. Fix the cause, `runner doctor WORKFLOW --force`, `resume` |
 | The runner was killed | `runner resume`. It reconciles first. If an agent from the dead runner is still alive, it refuses; `resume --stop-orphans` stops it |
 | Reconciliation error | The message states what was expected and what was found. Restore that, then `resume`. The runner will not guess |
 

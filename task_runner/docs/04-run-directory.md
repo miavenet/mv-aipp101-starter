@@ -130,7 +130,7 @@ itself. Deliverables live in the repository (D3); this is the record of how they
 
 `status` is one of `running`, `done`, `failed`, `needs_human`, `stopped`.
 
-The identity fields are written once at `start`. `status`, `spend` and `seconds` are **copied in
+The identity fields are written once at `start`. `status`, `spend`, `seconds` and `run_budget_usd` are **copied in
 from `state.json`** whenever the derived files are regenerated, so rule 1 holds: the engine never
 reads them back. `run.json` also records `name`, `git_toplevel`, `library` and `branch_mode`.
 Task order numbers step by 10 for tasks written in the workflow; generated panel members take the

@@ -16,10 +16,10 @@ documents. Those remain the reference; this tutorial explains them and links to 
 | 1 | [The idea](01-the-idea.md) | What problem this solves, and the five rules everything follows from | design |
 | 2 | [A task, end to end](02-a-task-end-to-end.md) | The life of one producer: attempt, checks, review, commit | design |
 | 3 | [Review panels and findings](03-review-panels-and-findings.md) | How several reviewers converge instead of looping forever | design |
-| 4 | [Safety: git, the record and recovery](04-safety-git-and-recovery.md) | Why a crash, a bad agent or a bad gate cannot corrupt your repository | design |
+| 4 | [Safety: git, the record and recovery](04-safety-git-and-recovery.md) | Why a crash, a bad agent or a bad gate cannot corrupt your repository | partly verified at stage 3 |
 | 5 | [Architecture](05-architecture.md) | The modules, who decides what, how agents are driven | design |
 | 6 | [Writing a workflow](06-writing-a-workflow.md) | The file format by example, and the mistakes `validate` catches | verified at stage 1 |
-| — | [Runbook](../runbook.md) | Operating a run: commands, stops, recovery | skeleton |
+| — | [Runbook](../runbook.md) | Operating a run: commands, stops, recovery | partly verified at stage 3 |
 
 ## How to read it
 

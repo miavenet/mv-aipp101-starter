@@ -1,6 +1,8 @@
 # 5 — Architecture
 
-Status: **design**
+Status: **design, with the stage 3 subset implemented**. Producer transactions, gates, checks,
+human decisions and the command adapter now run; panels, headless adapters and budgets remain
+later-stage work. See the [verified CLI walkthrough](../stage-3-walkthrough.md).
 
 ## The modules, and who is allowed to decide
 

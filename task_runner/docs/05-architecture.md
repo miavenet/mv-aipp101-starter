@@ -301,6 +301,30 @@ Pinned refs are the runner's namespace, and they are cleaned up (B6): `runner pr
 `refs/task-runner/<run>/` for every run that is `done` or whose directory no longer exists, after
 checking that each set-aside task still has its `failed.patch`. Refs of unfinished runs are kept.
 
+### Clarifications settled while building stage 2
+
+- **`.runs/`, the lock and the qualification cache live at the top of the git repository**, even
+  when a workflow's `root` is a subdirectory of it. The lock, the pinned refs and `prune` are per
+  repository. Paths inside `gitops` are relative to the repository top; the engine translates task
+  paths, which are relative to `root`.
+- `refs/task-runner/<run>/` is keyed by the run **directory name** (`<stamp>-<uuid8>`), so `prune`
+  can match a ref to its directory.
+- **The owner's git hooks never run**: every git call the runner makes sets `core.hooksPath` to
+  `/dev/null`. A pre-commit hook must not be able to change or block an accepted commit.
+- An embedded repository **with no commit** makes `git add -A` fail outright, so the mode-160000
+  scan alone is not enough. The runner first walks the work tree for nested `.git` entries and
+  removes those directories, then takes the candidate snapshot.
+- A revert is made with `git revert --no-commit` followed by a commit carrying `Operation: <op>/<n>`
+  and `Reverts:` trailers, which is how a resumed `--reopen` recognises the reverts already done.
+- A detached HEAD is refused only with `branch = "current"`. With a run branch, `original_branch`
+  is recorded as null.
+- **An unreadable or empty lock file counts as held**, since another runner may be writing it. A
+  crash between creating and writing the lock therefore needs a person to delete the file; the
+  error message says which file.
+- Orphan detection checks the identity of the **group leader**; when it is alive, `--stop-orphans`
+  stops the whole group.
+- Checking out the run branch at `start` is an effect with its own intent and reconciliation.
+
 ## Crash recovery (A2)
 
 An atomic `state.json` protects the state file. It cannot make a subprocess, a file write, a commit
@@ -414,3 +438,15 @@ runner prune                          delete the pinned refs of finished or dele
 | Dynamic tasks (a planning task that emits tasks) | `replan` already adds tasks to a live run; a `plan` type would feed it, behind a human approval |
 | The hook logger's session scorecard as a stuck signal | The engine reads it after a producer's attempt; red means abandon the session |
 | Importing Attractor DOT | `graph` exports DOT now; importing needs only a parser, since the engine's model is a superset of a linear Attractor pipeline |
+
+### Stage 3 implementation notes
+
+`proc.py` is the shared process and redaction layer under `agents.py` and `checks.py`. Both agent
+calls and gate/check commands have durable intents and recorded process identities. Resume refuses
+a live child unless `--stop-orphans` is supplied, then reruns incomplete verification. An interrupted
+standalone check first restores its pinned base. Verifier prerequisites are scheduled before the
+producer starts so they cannot require another writer while it holds the tree.
+
+Only the `command` adapter executes at this stage. Review workflows and unavailable adapters stop
+before agent execution. Qualification, panel scheduling and monetary budget enforcement retain
+the stage boundaries in the implementation plan. See the [walkthrough](stage-3-walkthrough.md).

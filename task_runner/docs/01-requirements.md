@@ -6,6 +6,36 @@ Take a workflow of varied tasks and carry it to completion with headless agents,
 leaving a record that a person or an agent can review afterwards. "Completion" means every task is
 accepted by something other than the agent that did it.
 
+**The goal behind it (owner, 2026-09-19): drive a project autonomously using agents.** The runner is
+a means to that.
+
+**The order of priorities (owner, same day): accuracy and safety are paramount. Autonomy is
+secondary to them.** Where they conflict, accuracy and safety win, every time:
+
+- A stop that protects accuracy or safety is the runner working correctly. It is never removed,
+  shortened or made optional to get a longer unattended run.
+- "Nothing is accepted on an agent's word" is the first rule. No feature may let work be accepted
+  with less verification than a supervised run would have required.
+- Anything that widens what agents may decide on their own (planning tasks, continuing past a
+  waiting task, looping across runs) keeps a human gate by default, and removing that gate is an
+  explicit, recorded choice by the owner, per workflow.
+- Within those limits, needless stops are avoided: people are asked for genuine decisions only.
+
+**The challenge is the optimal trade-off (owner, same day)**, not maximal caution. A runner that
+asks a person about everything is accurate and useless; one that asks about nothing is autonomous
+and untrustworthy. The design separates what is traded from what is not:
+
+| | Treated as | Examples |
+|---|---|---|
+| **Safety invariants** | Hard constraints. Never traded | The repository is never corrupted; work is never lost; nothing is accepted unverified; an agent never decides beyond its task; the record cannot be rewritten |
+| **Accuracy, autonomy, cost** | Balanced against each other, per task | How many reviewers, which model, whether a person signs off, how many attempts, how much is spent |
+
+The balance is set by **risk**, not by habit: human attention goes where a mistake is costly or hard
+to undo **and** machine verification is weak (a design decision, a hand-decoded fixture, a plan);
+agents run alone where verification is strong (code behind property tests, mutation checks and a
+frozen test suite). And it is set from **evidence**: the run record already holds what is needed to
+measure it, so a gate is added or removed because of what the numbers show, never by guess.
+
 ## From the owner
 
 | # | Requirement |

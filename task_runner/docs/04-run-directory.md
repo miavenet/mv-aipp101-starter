@@ -92,7 +92,10 @@ itself. Deliverables live in the repository (D3); this is the record of how they
    not make as a failure of that job. The ledger decides every verdict, so it is covered from the
    first finding, not only once something is closed.
 5. **No secrets by intent.** The runner passes no credentials. Agent output is stored as the agent
-   printed it, after the same redaction patterns the hook logger uses (tokens, keys, bearer headers).
+   printed it, after token/key/bearer-header redaction in `proc.py`. Lines over 64 KiB are replaced
+   with `[overlong line omitted for safe redaction]`: a token split at a read boundary must not leak,
+   and log buffering must stay bounded. Command answers therefore need a final JSON object on
+   lines within this limit and within the 256 KiB retained output tail.
 6. **Self-ignoring.** `.runs/.gitignore` holds `*`. Committing a run record is the owner's choice.
 7. **Linked to the hook log.** The run UUID and task id are exported to every agent call as
    `TASK_RUNNER_RUN` and `TASK_RUNNER_TASK`, so the repository's hook logger ties each driven
@@ -126,6 +129,13 @@ itself. Deliverables live in the repository (D3); this is the record of how they
 ```
 
 `status` is one of `running`, `done`, `failed`, `needs_human`, `stopped`.
+
+The identity fields are written once at `start`. `status`, `spend` and `seconds` are **copied in
+from `state.json`** whenever the derived files are regenerated, so rule 1 holds: the engine never
+reads them back. `run.json` also records `name`, `git_toplevel`, `library` and `branch_mode`.
+Task order numbers step by 10 for tasks written in the workflow; generated panel members take the
+producer's number plus 1, 2, … . `state.json` is guarded by a before-and-after hash around each job
+rather than by `integrity.json`, because the runner itself rewrites it constantly.
 
 ## Task status values
 

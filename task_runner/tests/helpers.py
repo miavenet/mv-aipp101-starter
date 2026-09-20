@@ -63,3 +63,128 @@ class RepoCase(unittest.TestCase):
 
 def run_cli(*args, cwd=None):
     return subprocess.run([sys.executable, RUNNER, *args], cwd=cwd, capture_output=True, text=True)
+
+
+# -- driving the engine with the scripted agent ----------------------------------------------------
+
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import json  # noqa: E402
+
+FAKE_AGENT = os.path.join(HERE, "fake_agent.py")
+
+
+def done(summary="Made it.", responses=()):
+    return {"outcome": "done", "summary": summary, "blocked_reason": "",
+            "responses": list(responses)}
+
+
+class EngineCase(RepoCase):
+    """A scratch repository, a workflow whose agent is the scripted one, and the runner driven in
+    process through its command line. `check_invariants` is the exit condition of stage 3."""
+
+    HEADER = ('name = "demo"\n[defaults]\nagent = "fake"\n{defaults}\n'
+              '[agents.fake]\nargv = [{python!r}, {agent!r}]\n')
+
+    def setUp(self):
+        super().setUp()
+        from taskrunner import cli
+        self.cli = cli
+        self._side = tempfile.TemporaryDirectory()
+        self.addCleanup(self._side.cleanup)
+        self.side = os.path.realpath(self._side.name)
+        self.script_path = os.path.join(self.side, "script.json")
+        self._env = dict(os.environ)
+        self.addCleanup(self._restore_env)
+        os.environ["FAKE_AGENT_SCRIPT"] = self.script_path
+        self.addCleanup(setattr, cli, "CRASH", None)
+        self.last = None
+
+    def _restore_env(self):
+        os.environ.clear()
+        os.environ.update(self._env)
+
+    def workflow(self, tasks, defaults=""):
+        header = self.HEADER.format(defaults=defaults, python=sys.executable, agent=FAKE_AGENT)
+        self.wf_path = self.write("wf.toml", header.replace("'", '"') + tasks)
+        self.commit()
+        return self.wf_path
+
+    def script(self, steps):
+        with open(self.script_path, "w", encoding="utf-8") as fh:
+            json.dump(steps, fh)
+        if os.path.exists(self.script_path + ".counter"):
+            os.unlink(self.script_path + ".counter")
+
+    def prompt(self, n):
+        with open(os.path.join(self.script_path + ".prompts", f"{n}.md"), encoding="utf-8") as fh:
+            return fh.read()
+
+    def calls(self):
+        try:
+            with open(self.script_path + ".counter", encoding="utf-8") as fh:
+                return int(fh.read())
+        except FileNotFoundError:
+            return 0
+
+    def runner(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = self.cli.main(list(args))
+        self.last = (code, out.getvalue(), err.getvalue())
+        return code
+
+    def start(self):
+        return self.runner("start", self.wf_path)
+
+    def resume(self, *extra):
+        return self.runner("resume", "-C", self.root, *extra)
+
+    @property
+    def output(self):
+        return self.last[1] + self.last[2]
+
+    def the_run(self):
+        from taskrunner import record
+        return record.Run.load(record.resolve_run(os.path.join(self.root, ".runs")))
+
+    def status(self, task):
+        return self.the_run().state["tasks"][task]["status"]
+
+    def task_file(self, task, *parts):
+        run = self.the_run()
+        return os.path.join(run.task_dir(task), *parts)
+
+    def read_json(self, task, *parts):
+        with open(self.task_file(task, *parts), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def git_out(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    def check_invariants(self):
+        """Every accepted commit is exactly the verified candidate, and nothing else is ever in
+        the tree when a transaction ends."""
+        from taskrunner import gitops
+        run = self.the_run()
+        g = gitops.Git(self.root)
+        active = run.state.get("active_producer")
+        for tid, st in run.state["tasks"].items():
+            if st["kind"] != "produce":
+                continue
+            if st["status"] == "accepted":
+                self.assertEqual(g.tree_of(st["commit"]), st["candidate"], tid)
+                verification = self.read_json(tid, os.path.basename(st["attempt_dir"]),
+                                              "verification.json")
+                self.assertEqual({r["candidate"] for r in verification["results"]}
+                                 | {st["candidate"]}, {st["candidate"]}, tid)
+            if st["status"] in ("failed", "blocked"):
+                self.assertTrue(os.path.exists(self.task_file(tid, "failed.patch")), tid)
+        tree = g.snapshot(os.path.join(self.side, "check-index"))
+        if active:
+            self.assertEqual(tree, run.state["tasks"][active]["candidate"], "the held candidate")
+        else:
+            self.assertEqual(self.git_out("status", "--porcelain"), "")
+            self.assertEqual(tree, g.tree_of("HEAD"))
+            self.assertEqual(run.state["intents"], [])

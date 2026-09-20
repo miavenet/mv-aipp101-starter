@@ -1,7 +1,7 @@
 # 07 — Implementation plan
 
 Status: **the owner gave the go-ahead on 2026-09-19, after the adversarial review was answered
-(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is next.** Progress is recorded in the
+(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is done: 116 tests pass in all, covering GIT-01 to GIT-16, REC-01 to REC-13 and RUN-01, 02, 07, 08, 11, 16, 17, several at primitive level until the engine exists. `start` creates a run and stops in stage 2. Stage 3 is now done: 196 tests pass; `command` agents, producer transactions, gates/checks, human decisions, resume and retry work end to end. Stage 4 is next.** Progress is recorded in the
 [task_runner README](../README.md).
 
 ## Approach
@@ -59,6 +59,18 @@ Parallel readers come late on purpose: the transaction, the recovery rules and t
 are where the accuracy lives, and they are easier to get right with one job at a time. The engine
 loop is written from the start as "apply finished work, pick what can start, wait", so parallel
 readers change the picking rule and nothing else.
+
+### Stage 3 completion (2026-09-20)
+
+The suite covers the stage 3 scenario ranges above, including SCH-09 to SCH-11 and SCH-13.
+Checks and agents both record process identities so recovery refuses live orphans; a resumed
+standalone check restores its base before retrying. Verifier prerequisites are accepted before
+opening the producer transaction. The full suite passes 196 tests with no model calls.
+
+[The CLI walkthrough](stage-3-walkthrough.md) contains captured output from a scratch repository:
+`start`, reject, `resume`, approve, `resume`, and a clean tree with exactly one accepted commit.
+Review-specific portions of ACC-03, ACC-22, FRZ-06 and FRZ-09 remain for stage 5; stage 3 tests the
+gate/prompt mechanisms and human-only stale acceptance without claiming panel execution.
 
 ### The scripted agent's contract (stage 3 onward)
 
@@ -167,8 +179,51 @@ gate scripts. Run the first producer alone and read its whole record before lett
 | 4 | More starter personas (security, test engineer, performance)? | Add when a workflow needs one; each is a file |
 | 5 | May a `human` task be satisfied by a named agent persona for low-risk steps? | No. `human` means a person |
 
+## What autonomy still needs
+
+The goal is to drive a project autonomously ([01](01-requirements.md)). Stages 1 to 8 give a runner
+that carries a **given** workflow to completion and stops safely when it cannot. Measured against
+the goal, four gaps remain, listed in the order proposed. None weakens
+verification. **Accuracy and safety come first and autonomy second**, so these items wait until
+stages 1 to 8 are done and the live check has shown the safety properties hold with real agents, and
+each must pass the rule beside it before it is built.
+
+| # | Gap | Why it matters for autonomy | Proposed remedy |
+|---|---|---|---|
+| 1 | **A person must write every workflow** | Driving a project means deciding the next tasks, not only doing listed ones | A `plan` task type: an agent proposes `[[task]]` entries from a milestone document and the record of earlier runs; the proposal is validated by the loader, reviewed by the process-manager and technical-project-manager personas, and enters the run through `replan`. A human approval is the default gate and can be removed per workflow once trusted |
+| 2 | **One waiting task stops everything** | A pending sign-off, an escalation or a blocked task idles the whole run, often overnight | Store the waiting candidate away (pinned tree, restore, re-verify on return) so independent branches continue. Already listed under Later; it moves up |
+| 3 | **Nobody is told when a person is needed** | An unattended run that stops silently loses hours | A `notify` command in `[defaults]`, run with the run id, status and the "Needs attention" text when a run stops with exit 2 or 255. The runner stays free of network code |
+| 4 | **No loop across runs** | A project is many milestones; each run ends and someone must start the next | A thin outer command, `runner drive PROJECT.toml`: plan the next milestone, run it, summarise, repeat until the plan task answers "nothing left" or a budget or a person stops it. It is only a loop over `start`; all safety stays in the run |
+
+### Finding the trade-off: measure, then tune
+
+The optimum cannot be reasoned out in advance; it has to be measured on real runs and adjusted. The
+record already contains the data, so this needs a report, not new machinery: `runner report` (after
+stage 7) reads finished runs and prints, per task type, persona and workflow:
+
+| Measure | What it tells | Read from |
+|---|---|---|
+| **Escaped defects**: accepted work later reopened, marked stale, or broken by a regression gate | Accuracy actually delivered. Too high: add verification | `replans/`, stale marks, `verification.json` |
+| **Person overturns**: approvals rejected, disputes where the person sided against the panel | Whether the human gate is still catching things. Near zero over many runs: a candidate for removal on low-risk tasks | `decision.json`, `findings.json` |
+| **Reviewer yield**: blocking findings per persona that led to a real change, against cost | Which reviewers earn their place. A persona that never changes an outcome is dropped or made advisory | `findings.json`, `run.json` |
+| **Autonomy**: share of tasks accepted with no person, person-minutes per accepted task, hours a run sat waiting | What the stops cost | `events.jsonl` |
+| **Invariant violations** | Must be zero. One violation outranks every other number and stops further relaxation | reconciliation errors, integrity failures |
+
+Tuning is then a per-task choice the owner makes in the workflow, from cheapest to safest:
+gates only; gates and an advisory reviewer; a blocking panel; a panel and a person. Tasks start at
+the safe end and move down one step at a time, only when the measures for that kind of task support
+it, and the move is recorded in the workflow's history.
+
+Safety rules for those four items:
+
+| Item | Rule it must meet |
+|---|---|
+| `plan` | Proposed tasks pass the same loader checks as hand-written ones, so every proposed producer has a verifier. A plan can never edit `protected`, remove a verifier, raise a budget or change an agent profile. The human approval is on by default |
+| Continue past a waiting task | The stored candidate is re-verified in full against the then-current tree before it can be accepted; any accepted work that touched its inputs sends it back to rework instead |
+| `notify` | Runs with the gates' reduced environment and receives text only. Its failure never changes the run |
+| `drive` | Adds no authority: each run inside it has every stop a manual run has, and `drive` halts at the first exit 2 or 255 rather than starting another run |
+
 ## Later
 
-In the order the design expects to need them: the session scorecard as a stuck signal; storing a
-candidate away during a human pause so other branches can continue; conditional tasks (`when`); parallel writers in git worktrees; a `plan` type that
+In the order the design expects to need them, after the autonomy items above: the session scorecard as a stuck signal; conditional tasks (`when`); parallel writers in git worktrees; a `plan` type that
 proposes tasks for a live run behind a human approval; importing Attractor DOT.

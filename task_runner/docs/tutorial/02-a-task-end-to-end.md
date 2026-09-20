@@ -1,6 +1,8 @@
 # 2 — A task, end to end
 
-Status: **design**
+Status: **design, with the stage 3 subset implemented**. Producer transactions, gates, checks,
+human decisions and the command adapter now run; panels, headless adapters and budgets remain
+later-stage work. See the [verified CLI walkthrough](../stage-3-walkthrough.md).
 
 This chapter follows one producer, `implement`, from the moment it becomes ready to the moment its
 work is a commit. Everything else in the runner exists to make this path trustworthy.

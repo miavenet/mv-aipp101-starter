@@ -1,6 +1,8 @@
 # 4 — Safety: git, the record and recovery
 
-Status: **design**
+Status: **partly verified at stage 3.** Snapshots, restore, commit, intent recovery, write protection
+and human pauses are exercised through the engine and the CLI. See the
+[walkthrough](../stage-3-walkthrough.md). Review panels and replan remain design for later stages.
 
 The runner lets agents write to your repository unattended. This chapter explains why that cannot
 corrupt it, even when an agent misbehaves, a gate misbehaves, or the machine dies mid-step.

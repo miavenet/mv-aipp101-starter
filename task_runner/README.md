@@ -5,7 +5,28 @@ it to completion with headless coding agents, and leaves a complete, navigable r
 that was done. Tasks can be of any type: design, implementation, tests, code review, design review,
 summaries, plain commands, human sign-off. The output of one stage feeds the next stage or stages.
 
-Status: **design only. No code exists here yet.** The build waits for the owner's go-ahead.
+Status: **stages 1–3 implemented; 196 tests pass.** `start` and `resume` execute one producer
+transaction at a time using a `command` agent, with gates, verifying checks and human decisions.
+`approve`, `reject` and `retry` are implemented, together with durable recovery and streamed,
+redacted logs. Every accepted commit is tied to the verified candidate.
+
+Run the tests from the repository root:
+
+```sh
+python3 -m unittest discover -s task_runner/tests -q
+```
+
+The runner needs Python 3.11+ and Git; no installation or third-party Python packages are required.
+Run `task_runner/runner --help` for the available commands. For a model-free example, copy
+[`examples/command-demo.toml`](examples/command-demo.toml) into a clean scratch Git repository,
+commit it, and run `runner start` on that copy. The
+[stage 3 walkthrough](docs/stage-3-walkthrough.md) records a real rejection, rework, approval and
+resume through the CLI.
+
+Claude Code and Codex adapters and `doctor` arrive in stage 4. Review panels, findings and budget
+reservation arrive in stage 5; replan arrives in stage 6. Workflows requiring review tasks or
+unavailable adapters stop with an explanation before any agent is called. The larger book-module
+example can be validated and graphed, but cannot execute until those later stages are implemented.
 
 ## Read in this order
 

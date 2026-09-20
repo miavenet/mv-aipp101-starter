@@ -1,9 +1,10 @@
 # Runbook
 
-Status: **skeleton**. The procedures below follow the design
-([05 — Command line](05-architecture.md#command-line)). No command here has been run yet, because
-the program is being built. Each section is marked **to verify at stage N**; at that stage the
-commands are run and their real output is pasted in. Output is never written by hand.
+Status: **partly verified at stage 3**. The [captured CLI walkthrough](stage-3-walkthrough.md)
+exercises start, rejection, rework, approval, resume and status with the model-free
+[command example](../examples/command-demo.toml). Recovery, retry, branch safety and process cleanup
+are also covered by the automated suite. Procedures involving `doctor`, review panels, budgets,
+`resolve` or `replan` remain design and need their later stages; those commands are not available yet.
 
 For the ideas behind these procedures, read the [tutorial](tutorial/README.md).
 
@@ -38,7 +39,7 @@ flowchart TB
    fixed, or its products ignored by git.
 5. Make sure the work tree is clean. There is no option to start dirty.
 
-## 2. Starting and watching a run — to verify at stage 3
+## 2. Starting and watching a run — verified at stage 3
 
 - `runner start WORKFLOW` creates a run, checks out `run/<workflow>-<uuid8>`, and works until it is
   done or needs something.

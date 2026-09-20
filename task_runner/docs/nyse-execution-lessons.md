@@ -277,3 +277,8 @@ Useful future scenarios: quota response preserves candidate and attempt allowanc
 near-limit telemetry selects the configured fallback at a safe boundary; stale/missing
 telemetry makes no headroom claim; no qualified fallback blocks visibly; provider switch
 retains findings and acceptance history; repeated format failure does not cycle providers.
+
+
+## 2026-09-20 — User-requested project pause
+
+Scenario attempt 7 progressed beyond producer protocol validation into review, but the panel blocked: missing required finding resolutions in the engineering response, and missing successful terminal event or malformed stream for spec compliance. No quota cause established. Candidate patch is retained (165661 bytes), contracts remain accepted, and no NYSE agent processes were running at pause. Do not retry until explicitly resumed. Recovery details: `nyse-pause-handoff.md`. The producer feedback fix enabled progress but did not resolve all reviewer protocol failure modes.

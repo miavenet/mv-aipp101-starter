@@ -228,3 +228,32 @@ def provided_context(git, base, candidate, paths, cap_bytes):
     manifest['evidence_sha256'] = hashlib.sha256(text.encode()).hexdigest()
     manifest['evidence_bytes'] = _size(text)
     return text, manifest
+
+
+def review_prompt(task, template, *, persona, target, brief, diff, full_path, open_findings,
+                  round_number, caps):
+    mode = ('Full review: this is your first sight of the candidate.' if round_number == 1 else
+            'Judge only the fix and regressions in the rework diff. Resolve each listed blocking '
+            'finding exactly once. New blockers must name a changed location in location or caused_by.')
+    findings_text = json.dumps(open_findings, indent=2, ensure_ascii=False)
+    if _size(findings_text) > caps['findings_cap_bytes']:
+        raise FindingsTooLarge('review findings exceed the prompt cap; none was dropped')
+    values = {'persona': fence('persona', persona), 'task.prompt': fence('brief', brief),
+              'task.id': fence('task id', task['id']), 'task.title': fence('task title', task['title']),
+              'target': fence('target', json.dumps(target, indent=2)),
+              'inputs': fence('inputs', json.dumps(target.get('inputs', []), indent=2)),
+              'gates': fence('gates', json.dumps(target.get('gates', []))),
+              'diff': diff_text(diff, caps['diff_cap_bytes'], full_path),
+              'findings': mode + '\n\n' + fence('open findings and author responses', findings_text),
+              'rules': rules_text([], [], []) + '\n- Do not change any file. Start a fresh review session.\n'
+                       '- Locations use path:line or path:line-line. The verdict must match the '
+                       'blocking findings remaining after advisory and rework-diff rules.\n'
+                       + ('- This reviewer is advisory: all findings are advisory and verdict is pass.\n'
+                          if task.get('advisory') else ''),
+              'result_schema': result_schema_text('review')}
+    for name, value in (task.get('params') or {}).items():
+        values[f'param.{name}'] = fence(f'parameter {name}', str(value))
+    rendered = substitute(template, values)
+    if '{rules}' not in template:
+        rendered += '\n\n' + values['rules']
+    return rendered

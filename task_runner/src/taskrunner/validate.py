@@ -102,6 +102,5 @@ def check_produce(answer, needing_response=()):
 
 
 def check_review(answer, ledger_view=None):
-    """Shape now. The checks against the ledger (verdict, resolutions) arrive with stage 5; the
-    `ledger_view` argument is where they plug in."""
+    """Validate the wire shape. findings.apply_review validates ledger semantics atomically."""
     return check_shape(answer, REVIEW)

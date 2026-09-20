@@ -6,6 +6,7 @@ It never checks agent capabilities: `validate` must work with no agent installed
 """
 
 import heapq
+import math
 import os
 import re
 import shlex
@@ -207,6 +208,8 @@ class _Loader:
                 self.err(f"{where}: unknown key '{key}'")
             elif not _type_ok(value, allowed[key]):
                 self.err(f"{where}: '{key}' must be a {allowed[key]}")
+            elif allowed[key] == NUM and (not math.isfinite(value) or value <= 0):
+                self.err(f"{where}: '{key}' must be finite and greater than zero")
             else:
                 good[key] = value
         return good
@@ -266,6 +269,12 @@ class _Loader:
             self.check_writers(tasks)
         self.protect_executed_files(tasks)
         self.check_ignored(tasks)
+        used_agents = sorted({t["agent"] for t in tasks if t["kind"] in ("produce", "review")})
+        for name in used_agents:
+            profile = wf.agents.get(name, {})
+            if profile.get("kind", name) in ("command", "codex"):
+                self.warn(f"agent '{name}' reports no dollar cost: dollar limits do not bind on it; "
+                          "time and attempts still apply, and usage is recorded as unpriced")
         wf.tasks = self.order(tasks, has_cycle)
         for n, t in enumerate(wf.tasks):
             t["order"] = n

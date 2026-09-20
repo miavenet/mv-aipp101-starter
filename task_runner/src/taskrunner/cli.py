@@ -1,6 +1,7 @@
 """Commands, exit codes, printing. Exit 0: fine. 2: something is wrong. 255: a person is needed."""
 
 import argparse
+import math
 import os
 import sys
 import signal
@@ -13,7 +14,6 @@ EXIT_OK, EXIT_FAILED, EXIT_HUMAN = 0, 2, 255
 
 # Commands of 05 that later stages build: name -> (stage, help)
 LATER = {
-    "resolve": (5, "a person settles an escalated finding"),
     "replan": (6, "bring an edited workflow into the run, where safe"),
 }
 
@@ -85,7 +85,16 @@ def _main(argv=None):
     p.add_argument("--stop-orphans", action="store_true", help="stop an agent that a dead runner "
                    "left running, instead of refusing to continue beside it")
     p.add_argument("-C", dest="where", default=".", metavar="DIR")
+    p.add_argument("--add-budget", type=float, default=0, metavar="USD")
     p.set_defaults(func=cmd_resume)
+
+    p = sub.add_parser("resolve", help="settle an escalated review finding")
+    p.add_argument("run")
+    p.add_argument("finding")
+    p.add_argument("--as", dest="decision", required=True, choices=("resolved", "advisory", "upheld"))
+    p.add_argument("-m", dest="note", default="")
+    p.add_argument("-C", dest="where", default=".", metavar="DIR")
+    p.set_defaults(func=cmd_resolve)
 
     for name, text in (("approve", "a person approves a human task"),
                        ("reject", "a person rejects; the note becomes feedback")):
@@ -282,8 +291,6 @@ def cmd_start(args):
     report_problems(wf, sys.stderr)
     if wf.errors:
         return EXIT_FAILED
-    if any(task["kind"] == "review" for task in wf.tasks):
-        return fail("reviews arrive in stage 5; no qualification probes or tasks were run")
     git = gitops.Git(wf.root)
     original = git.current_branch()
     current_mode = wf.defaults["branch"] == "current"
@@ -402,6 +409,8 @@ def _open_run(args, unfinished_only=False):
 
 
 def cmd_resume(args):
+    if not math.isfinite(args.add_budget) or args.add_budget < 0:
+        return fail("--add-budget must be a finite nonnegative amount")
     try:
         run, git, lock = _open_run(args, unfinished_only=True)
     except (record.RecordError, gitops.GitError) as exc:
@@ -424,6 +433,12 @@ def cmd_resume(args):
                         "was, then `runner resume`")
         except gitops.RestoreError as exc:
             return fail(f"environment failure: {exc}")
+        if args.add_budget:
+            if not math.isfinite(run.state["run_budget_usd"] + args.add_budget):
+                return fail("the resulting run budget must be finite")
+            run.state["run_budget_usd"] += args.add_budget
+            run.save()
+            run.event("budget-added", amount_usd=args.add_budget, budget_usd=run.state["run_budget_usd"])
         if any(st["kind"] in ("produce", "review") for st in run.state["tasks"].values()):
             frozen = record.read_json(os.path.join(run.path, "workflow.expanded.json"))
             wf = SimpleNamespace(root=frozen["paths"]["root"], tasks=frozen["tasks"], agents=frozen["agents"])
@@ -465,4 +480,19 @@ def cmd_retry(args):
     print(f"{args.task}: fresh attempts"
           + (", continuing from its set-aside work" if args.apply_patch else ", starting clean")
           + f". Continue with: runner resume {run.name}")
+    return EXIT_OK
+
+
+def cmd_resolve(args):
+    try:
+        run, git, lock = _open_run(args)
+    except (record.RecordError, gitops.GitError) as exc:
+        return fail(str(exc))
+    with lock:
+        try:
+            engine.resolve(run, engine.Engine(run, git), args.finding, args.decision, args.note,
+                           who=os.environ.get("USER", ""))
+        except engine.Refused as exc:
+            return fail(str(exc))
+    print(f"{args.finding}: {args.decision}. Continue with: runner resume {run.name}")
     return EXIT_OK

@@ -25,6 +25,10 @@ def main():
     script = os.environ["FAKE_AGENT_SCRIPT"]
     with open(script, encoding="utf-8") as fh:
         steps = json.load(fh)
+    if isinstance(steps, dict):
+        task = os.environ["TASK_RUNNER_TASK"]
+        steps = steps.get(task, [])
+        script = script + "." + task
     counter = script + ".counter"
     try:
         with open(counter, encoding="utf-8") as fh:

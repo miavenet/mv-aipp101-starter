@@ -935,13 +935,13 @@ gate = ["false"]
         self.assertEqual(self.git_out("show", "HEAD:README.md"), "scratch")
         self.check_invariants()
 
-    def test_reviews_wait_for_stage_5(self):
+    def test_reviews_require_qualified_read_only_boundary(self):
         self.workflow(ONE.replace("gate =", 'reviewers = ["principal-engineer"]\ngate ='))
         self.script([GOOD])
         self.assertEqual(self.start(), 2)
-        self.assertIn("reviews arrive in stage 5", self.output)
+        self.assertIn("needs boundary", self.output)
         self.assertEqual(self.calls(), 0)
-        self.assertFalse(os.path.exists(os.path.join(self.root, ".runs")))
+        self.assertEqual(self.git_out("branch", "--show-current"), "main")
 
 
 

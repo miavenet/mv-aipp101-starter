@@ -97,7 +97,7 @@ class Cli(RepoCase):
             self.assertIn("digraph", fh.read())
 
     def test_later_commands_say_so(self):
-        for cmd, stage in (("resolve", 5), ("replan", 6)):
+        for cmd, stage in (("replan", 6),):
             res = run_cli(cmd, "whatever")
             self.assertEqual(res.returncode, 2)
             self.assertIn(f"not implemented yet (stage {stage})", res.stderr)

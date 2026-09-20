@@ -640,11 +640,14 @@ class Run:
         info = self.info
         # run.json: the identity never changes; the totals are copied from the state.
         info.update(status=self.state["status"], spend=self.state["spend"],
-                    seconds=self.state["seconds"])
+                    seconds=self.state["seconds"], run_budget_usd=self.state["run_budget_usd"])
         self._write(os.path.join(self.path, "run.json"), dump_json(info).decode("utf-8"))
         self._write(os.path.join(self.path, "STATUS.md"), render_run_status(info, self.state))
         for task_id in self.state["order"]:
             tdir = self.task_dir(task_id)
+            ledger = self.state["tasks"][task_id].get("ledger")
+            if ledger is not None:
+                self.write_decision(os.path.join(tdir, "findings.json"), ledger)
             self._write(os.path.join(tdir, "STATUS.md"),
                         render_task_status(task_id, self.state["tasks"][task_id], tdir))
         for dirpath, dirnames, _files in os.walk(self.path):
@@ -759,6 +762,8 @@ def _reconcile_agent(run, git, it, stop_orphans, grace_s, **_):
     os.makedirs(inv, exist_ok=True)
     write_durable(outcome, dump_json({"status": "interrupted",
                                       "reason": "the runner stopped while this call was running"}))
+    from . import budgets, agents
+    budgets.settle(run.state, task, it.get("reservation", 0), agents.AgentResult(agents.INTERRUPTED))
     run.state["tasks"][task]["session_id"] = None        # the session is abandoned
     run.finish(it["op"], status="interrupted")
     return f"{it['op']} agent call of '{task}': marked interrupted; its session is abandoned"
@@ -827,6 +832,9 @@ def render_run_status(info, state):
         lines.append(f"| {t['dir'].split('-', 1)[0]} | {task_id} | {t['type']} | {status} | "
                      f"{t['attempts'] or ''} | {_money(t['cost_usd']) if t['cost_usd'] else ''} | "
                      f"{(t['commit'] or '')[:7]} |")
+        for finding in t.get("ledger", {}).get("findings", []):
+            if finding["severity"] == "blocking" and finding["status"] in ("open", "disputed", "escalated"):
+                attention.append(f"- **{finding['id']}** [{finding['status']}]: {finding['title']}")
         if t["status"] in ("waiting_human", "blocked", "failed"):
             attention.append(f"- **{task_id}** is {t['status']}"
                              + (f": {t['reason']}" if t["reason"] else "")
@@ -850,7 +858,11 @@ def render_run_status(info, state):
             elif t["status"] in ("failed", "blocked"):
                 lines.append(f"    runner retry {info['name']} {task_id}"
                              + (" [--apply-patch]" if t["kind"] == "produce" else ""))
-        lines.append(f"    runner resume {info['name']}")
+        for t in state["tasks"].values():
+            for finding in t.get("ledger", {}).get("findings", []):
+                if finding["status"] == "escalated":
+                    lines.append(f"    runner resolve {info['name']} {finding['id']} --as resolved|advisory|upheld")
+        lines.append(f"    runner resume {info['name']}" + (" --add-budget USD" if state["status"] == "stopped" else ""))
     return "\n".join(lines) + "\n"
 
 

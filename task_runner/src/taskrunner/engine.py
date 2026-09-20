@@ -2,9 +2,8 @@
 exit codes, validated answer fields and counters. `agents`, `checks`, `gitops` and `record` report
 facts and carry out effects.
 
-Stage 3 drives one producer transaction at a time, verified by gates, verifying checks and people.
-Review panels (step 6 of the acceptance ladder), parallel readers and budget reservation arrive in
-stage 5; the places they slot into are marked STAGE 5.
+One producer owns the tree through checks, parallel review panels, rework and acceptance.
+Ledger verdicts, candidate snapshots and durable budget reservations determine every transition.
 """
 
 import datetime
@@ -14,7 +13,8 @@ import os
 import sys
 import tomllib
 
-from . import agents, checks, gitops, patterns, prompts, record, validate, qualification
+from . import agents, checks, gitops, patterns, prompts, record, validate, qualification, findings, budgets
+from .panels import Panels
 
 EXIT_OK, EXIT_FAILED, EXIT_HUMAN = 0, 2, 255
 PROTOCOL_RETRIES = 2
@@ -38,7 +38,7 @@ def _now():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-class Engine:
+class Engine(Panels):
     def __init__(self, run, git, out=None, crash=None, environ=None):
         self.run, self.git = run, git
         self.out = out or sys.stderr
@@ -111,13 +111,10 @@ class Engine:
         """Run until nothing can start. Returns the exit code."""
         state = self.run.state
         try:
-            reviews = [t["id"] for t in self.tasks.values() if t["kind"] == "review"]
-            if reviews:
-                raise EngineStop("this workflow has review tasks (" + ", ".join(reviews[:3])
-                                 + ("…" if len(reviews) > 3 else "") + "), and reviews arrive in "
-                                 "stage 5. Nothing was run: accepting work without its reviewers "
-                                 "would be wrong")
-            for task in self.producers():
+            problems = self.run.integrity_check()
+            if problems:
+                raise EngineStop("the run record was changed: " + "; ".join(problems))
+            for task in (t for t in self.tasks.values() if t["kind"] in ("produce", "review")):
                 try:
                     agents.make(task["agent"], self.wf["agents"][task["agent"]])
                 except agents.UnknownAgent as exc:
@@ -144,6 +141,13 @@ class Engine:
                     self.st(task["id"]).update(status="waiting_human",
                                                reason="waiting for a person's approval")
                     self.save()
+        except budgets.Exhausted as stop:
+            state.update(status="stopped", stop_reason=str(stop))
+            self.remember_tree()
+            self.save()
+            self.run.event("budget-stop", reason=str(stop))
+            self.say(f"runner: {stop}. Continue with runner resume --add-budget USD")
+            return EXIT_FAILED
         except EngineStop as stop:
             state["status"] = "failed"
             state["stop_reason"] = str(stop)
@@ -198,7 +202,7 @@ class Engine:
     def prerequisites(self, task):
         needs = set(task["needs"])
         if task["kind"] == "produce":
-            for verifier in self.verifiers_of(task["id"], "check") + self.verifiers_of(task["id"], "human"):
+            for verifier in self.verifiers_of(task["id"], "check") + self.verifiers_of(task["id"], "human") + self.reviewers_of(task["id"]):
                 needs.update(verifier["needs"])
         return sorted(needs)
 
@@ -323,6 +327,10 @@ class Engine:
             return self.attempt(task)
         if step == "verify":
             return self.verify(task)
+        if step == "panel":
+            return self.panel(task)
+        if step == "escalation":
+            return self.panel_decision(task)
         if step == "human":
             return self.humans(task)
         if step == "commit":
@@ -349,7 +357,14 @@ class Engine:
             return self.end(task, "failed", f"{st['attempts_used']} attempts used; the last was "
                             f"sent back by {st.get('sender') or 'a check'}")
         st["status"] = "rework" if st["attempts_used"] else "running"
-        n, adir = self.run.new_attempt(tid)
+        pending = st.get("pending_attempt")
+        if pending:
+            n, rel = pending
+            adir = os.path.join(self.run.path, rel)
+        else:
+            n, adir = self.run.new_attempt(tid)
+            st["pending_attempt"] = [n, os.path.relpath(adir, self.run.path)]
+            self.run.save()
         rel_adir = os.path.relpath(adir, self.run.path)
         feedback = st.get("feedback")
         agent = agents.make(task["agent"], self.wf["agents"][task["agent"]])
@@ -375,31 +390,47 @@ class Engine:
                              record.dump_json(self.input_manifest(task)))
         self.run.save()
 
-        needing = [f["id"] for f in (feedback or {}).get("needing", [])]
-        result, problems, calls = None, [], 0
-        for _try in range(1 + PROTOCOL_RETRIES):
-            calls += 1
+        result = agents.AgentResult(agents.PROTOCOL_ERROR,
+                                    error=st.get("pending_protocol_error", "interrupted calls exhausted protocol retries"))
+        problems = []
+        for _try in range(st.get("pending_protocol_tries", 0), 1 + PROTOCOL_RETRIES):
             result, problems = self.call_agent(agent, task, adir, prompt,
                                                st["session_id"] if continuing else None)
             if problems:
                 break
             if result.status == agents.OK:
-                errors = validate.check_produce(result.structured, needing)
+                try:
+                    responded = findings.respond(self.ledger(tid), result.structured, n)
+                    errors = []
+                except findings.ProtocolError as exc:
+                    errors = [str(exc)]
                 if not errors:
                     break
                 result.status, result.error = agents.PROTOCOL_ERROR, "; ".join(errors)
             if result.status != agents.PROTOCOL_ERROR:
                 break
+            st["pending_protocol_error"] = result.error
+            st["session_id"] = None
+            continuing = False
+            prompt = prompts.produce_prompt(
+                task, self.template(task), brief=self.brief(task), inputs=self.inputs(task),
+                feedback=feedback, attempt=st["attempts_used"] + 1, frozen=self.frozen(tid), caps=caps)
+            self.run.save()
+        calls = st.get("pending_protocol_tries", 0)
         self.crash("attempt:after-agent")
 
         if problems:                                              # FRZ-07
             return self.end(task, "failed", "the run record was changed during the agent's call: "
                             + "; ".join(problems))
         if result.status == agents.ENVIRONMENT:
+            st["pending_protocol_tries"] = max(0, st.get("pending_protocol_tries", 0) - 1)
             qualification.invalidate(self.run, tid)
             raise EngineStop(f"environment failure in task '{tid}': {result.error}. No attempt "
                              "was used. Fix the cause, then `runner resume`")
 
+        st.pop("pending_attempt", None)
+        st.pop("pending_protocol_tries", None)
+        st.pop("pending_protocol_error", None)
         st["attempts_used"] += 1
         st["attempt_dir"] = rel_adir
         record.write_durable(os.path.join(adir, "result.json"), record.dump_json({
@@ -416,6 +447,8 @@ class Engine:
         st["session_id"] = result.session_id
         answer = result.structured
         st["summary"] = answer["summary"]
+        st["ledger"] = responded
+        self.save()
         if answer["responses"]:
             record.write_durable(os.path.join(adir, "responses.json"),
                                  record.dump_json(answer["responses"]))
@@ -428,15 +461,21 @@ class Engine:
                                   "were not met", "\n".join(f"- {p}" for p in problems))
         self.pin(f"{tid}/candidate-{n}", candidate)
         self.write_manifest(task, adir, candidate)
-        st.update(candidate=candidate, step="verify", status="verifying")
+        st.update(candidate=candidate, step="verify", status="verifying", panel=None)
         self.save()
         return None
 
     def call_agent(self, agent, task, adir, prompt, session_id):
         tid = task["id"]
+        reservation = budgets.cap_for(agent, task)
+        if not budgets.fits(self.run.state, reservation):
+            raise budgets.Exhausted(f"budget cannot cover the next call of '{tid}' (${reservation:g})")
         _n, inv = self.run.new_invocation(adir)
+        self.run.state["spend"]["reserved_usd"] += reservation
+        self.st(tid)["pending_protocol_tries"] = self.st(tid).get("pending_protocol_tries", 0) + 1
+        record.write_durable(os.path.join(inv, "prompt.md"), prompt.encode())
         op = self.run.begin("agent", task=tid,
-                            invocation_dir=os.path.relpath(inv, self.run.path))
+                            invocation_dir=os.path.relpath(inv, self.run.path), reservation=reservation)
         guard = self.run.integrity_begin()
         startup_problems = []
 
@@ -454,19 +493,8 @@ class Engine:
                            read_only=False, env=env, on_start=started)
         problems = startup_problems + self.run.integrity_end(guard)
         record.write_durable(os.path.join(inv, "outcome.json"), record.dump_json(result.outcome()))
+        budgets.settle(self.run.state, tid, reservation, result)
         self.run.finish(op, status=result.status)
-        spend, tstate = self.run.state["spend"], self.st(tid)
-        self.run.state["seconds"] += int(result.seconds)
-        if result.cost_usd is not None:
-            spend["known_usd"] = round(spend["known_usd"] + result.cost_usd, 6)
-            tstate["cost_usd"] = round(tstate["cost_usd"] + result.cost_usd, 6)
-        elif result.status != agents.ENVIRONMENT:
-            spend["unpriced"]["calls"] += 1
-            if not result.usage:
-                spend["unpriced"]["unknown_calls"] += 1
-            spend["unpriced"]["tokens_in"] += int(result.usage.get("tokens_in", 0))
-            spend["unpriced"]["tokens_out"] += int(result.usage.get("tokens_out", 0))
-        self.run.save()
         return result, problems
 
     def send_back(self, task, sender, title, cause, check_progress=None):
@@ -479,7 +507,7 @@ class Engine:
                                 f"candidate tree ({check_progress})")
             st["last_failure"] = mark
         st.update(step="attempt", sender=sender, last_cause=cause,
-                  feedback={"cause_title": title, "cause": cause, "needing": [], "info": []})
+                  feedback={"cause_title": title, "cause": cause, **findings.feedback(self.ledger(task["id"]))})
         self.save()
         self.say(f"{task['id']}: sent back ({title})")
         return None
@@ -642,6 +670,8 @@ class Engine:
                  "new": g.get("new", False), "fail_pattern": g.get("fail_pattern", "")}
                 for n, g in enumerate(task["gates"], 1)]
         for c in self.verifiers_of(tid, "check"):
+            if c in self.parallel_checks_of(tid):
+                continue  # these readers run with the panel after writer checks
             plan.append(self.check_verifier(c, c["id"], "check"))
         touched = {self.to_root(p) for _s, p, _o, _n
                    in self.git.changed_paths(st["base"], st["candidate"])}
@@ -711,7 +741,6 @@ class Engine:
                     pass                                          # its job; the runner put it back
                 elif v["read_only"] and v["task"]:
                     # The claim was false. The check fails as a check; it is a writer from now on.
-                    # STAGE 5: the reviews that ran beside it are void and run again.
                     self.st(v["task"])["demoted"] = True
                     entry["result"] = "fail"
                     entry["note"] = "declared read_only but wrote: " + ", ".join(changed)
@@ -747,8 +776,7 @@ class Engine:
             sender, title, cause, signature, _v = failure
             return self.send_back(task, sender, title, cause, check_progress=signature)
 
-        # STAGE 5: step 6, the review panel, runs here, on this same candidate.
-        st.update(step="human")
+        st.update(step="panel")
         self.run.save()
         return None
 
@@ -808,7 +836,7 @@ class Engine:
     def finalize_acceptance(self, task):
         """Bookkeeping after the commit is recorded. Safe to repeat."""
         tid, st = task["id"], self.st(task["id"])
-        for v in self.verifiers_of(tid, "check") + self.verifiers_of(tid, "human"):
+        for v in self.verifiers_of(tid, "check") + self.verifiers_of(tid, "human") + self.reviewers_of(tid):
             if self.st(v["id"])["status"] not in ("accepted",):
                 self.st(v["id"]).update(status="accepted", reason="")
         if st.get("attempt_dir"):
@@ -855,7 +883,7 @@ class Engine:
         self.crash("set-aside:before-restore")
         changed = [p for _s, p, _o, _n in self.git.changed_paths(st["base"], tree)]
         self.restore(st["base"], changed, st["base"])
-        for v in self.verifiers_of(tid, "check") + self.verifiers_of(tid, "human"):
+        for v in self.verifiers_of(tid, "check") + self.verifiers_of(tid, "human") + self.reviewers_of(tid):
             vst = self.st(v["id"])
             if vst["status"] in ("pending", "waiting_human", "running"):
                 vst.update(status="skipped", reason=f"'{tid}' is {final['status']}", decision=None)
@@ -934,14 +962,38 @@ def retry(run, engine, git, task_id, apply_patch=False):
             git.apply_patch(patch, check_only=True)
         except gitops.GitError as exc:
             raise Refused(f"the patch of '{task_id}' does not apply: {exc}") from exc
+    if task["kind"] == "produce":
+        st["ledger"] = findings.restart(engine.ledger(task_id))
+    st.pop("pending_attempt", None)
+    st.pop("pending_protocol_tries", None)
+    st.pop("pending_protocol_error", None)
+    st.pop("panel", None)
     st.update(status="pending", reason="", final=None, step=None, feedback=None,
               last_failure=None, session_id=None, decision=None, apply_patch=bool(apply_patch))
     for other in engine.order:
         ost = engine.st(other)
-        verifies = engine.tasks[other].get("verifies") == task_id
+        verifies = (engine.tasks[other].get("verifies") == task_id or
+                    engine.tasks[other].get("reviews") == task_id)
         if ost["status"] == "skipped" or (verifies and ost["status"] in ("objected", "accepted")):
             ost.update(status="pending", reason="", decision=None)
     state["status"] = "running"
     run.event("retry", task=task_id, apply_patch=bool(apply_patch))
     run.save()
     run.regenerate()
+
+
+def resolve(run, engine, fid, decision, note="", who=""):
+    tid = fid.split("/", 1)[0]
+    if tid not in engine.tasks or engine.tasks[tid]["kind"] != "produce":
+        raise Refused(f"no producer for finding '{fid}'")
+    st = engine.st(tid)
+    if run.state.get("active_producer") != tid or st.get("step") != "escalation":
+        raise Refused(f"'{tid}' is not waiting for an escalated finding")
+    if engine.snapshot() != st["candidate"]:
+        raise Refused("the work tree is no longer the candidate that was reviewed")
+    try:
+        st["ledger"] = findings.resolve(engine.ledger(tid), fid, decision, note, who)
+    except ValueError as exc:
+        raise Refused(str(exc)) from exc
+    run.event("finding-resolved", finding=fid, decision=decision, note=note, by=who)
+    engine.save()

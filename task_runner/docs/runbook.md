@@ -70,7 +70,11 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
   done or needs something.
 - While it runs, use `runner activity latest --tail 20` for recent agent tool/hook events. See
   [headless observability](headless-observability.md) for provenance and missing-event limitations.
-- While it runs, read `.runs/<workflow>/<run>/STATUS.md`; it is regenerated on every state change.
+- While it runs, read `.runs/<workflow>/<run>/STATUS.md`. It is regenerated on every state change,
+  and a working runner also refreshes it about every 30 seconds: the **In flight** section lists each
+  agent call and command that has begun, when it started and how long it has been running, with
+  an "As of" time. An old "As of" time means no runner is working on the run (it was stopped or
+  killed): `runner resume`.
 - **Do not edit the work tree or the run branch while a run is active or paused.** `resume` will
   refuse to continue if you did.
 

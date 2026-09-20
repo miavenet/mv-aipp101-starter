@@ -83,6 +83,42 @@ class RunCase(RepoCase):
         return out
 
 
+class Heartbeat(RunCase):
+    """rec: STATUS.md shows what is in flight and how long, refreshed without a state change"""
+
+    def status(self):
+        with open(os.path.join(self.run_.path, "STATUS.md")) as fh:
+            return fh.read()
+
+    def test_in_flight_calls_show_their_age(self):
+        import datetime
+        self.run_.state["status"] = "running"
+        op = self.run_.begin("agent", task="design", invocation_dir="tasks/010-design/attempt-1/invocation-1")
+        began = self.run_.intent(op)["at"]
+        self.run_.regenerate()
+        text = self.status()                                          # deterministic: no clock in it
+        self.assertIn("## In flight", text)
+        self.assertIn(f"**design**: agent call, started {began[11:19]} UTC", text)
+        self.assertNotIn("running for", text)
+        state_before = record.read_json(os.path.join(self.run_.path, "state.json"))
+        later = datetime.datetime.strptime(began, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=datetime.timezone.utc) + datetime.timedelta(minutes=14, seconds=5)
+        self.assertTrue(self.run_.refresh_status(now=later))
+        text = self.status()
+        self.assertIn("running for 14 min 05 s", text)
+        self.assertIn(f"As of {later.strftime('%H:%M:%S')} UTC", text)
+        self.assertEqual(record.read_json(os.path.join(self.run_.path, "state.json")), state_before)
+        self.assertFalse(os.path.exists(os.path.join(self.run_.path, "STATUS.md.beat")))
+        self.run_.finish(op, status="ok")
+        self.run_.regenerate()
+        self.assertNotIn("## In flight", self.status())
+
+    def test_a_beat_never_raises(self):
+        self.run_.state["status"] = "running"
+        self.run_.state["intents"].append({"op": "x", "kind": "agent", "at": "not a time"})
+        self.assertFalse(self.run_.refresh_status())
+
+
 class BranchDisposition(RunCase):
     """rec: STATUS.md of a finished run says where its branch went, observed from git"""
 

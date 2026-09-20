@@ -13,11 +13,13 @@ import shutil
 import signal
 import subprocess
 import time
+import threading
 import uuid
 
 from . import __version__, gitops
 
 RUNS_DIR = ".runs"
+HEARTBEAT_S = 30                                   # how often a working runner refreshes STATUS.md
 RUNS_DIR_ENV = "TASK_RUNNER_RUNS_DIR"         # set by `runner --runs-dir DIR`, or exported by the owner
 LOCK_FILE = "lock"
 STATE_VERSION = 1
@@ -385,6 +387,10 @@ def resolve_run(runs_dir, ref="latest", unfinished_only=False):
 
 # -- a run --------------------------------------------------------------------------------------
 
+def _utc_now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _utc_stamp(now):
     return now.strftime("%Y%m%dT%H%M%SZ")
 
@@ -404,6 +410,7 @@ class Run:
         self.path = path
         self.state = state
         self.crash = _no_crash
+        self._status_lock = threading.Lock()         # regenerate() and the heartbeat both write STATUS.md
 
     # -- creation and loading ----------------------------------------------------------------
 
@@ -528,7 +535,7 @@ class Run:
         """Record the intent of an external effect, durably, before the effect. Returns its id."""
         self.state["op_seq"] += 1
         op_id = f"op-{self.state['op_seq']:04d}-{uuid.uuid4().hex[:8]}"
-        self.state["intents"].append({"op": op_id, "kind": kind, **expect})
+        self.state["intents"].append({"op": op_id, "kind": kind, "at": _utc_now_iso(), **expect})
         self.save()
         self.event("intent", op=op_id, kind=kind)
         return op_id
@@ -667,8 +674,9 @@ class Run:
         info.update(status=self.state["status"], spend=self.state["spend"],
                     seconds=self.state["seconds"], run_budget_usd=self.state["run_budget_usd"])
         self._write(os.path.join(self.path, "run.json"), dump_json(info).decode("utf-8"))
-        self._write(os.path.join(self.path, "STATUS.md"),
-                    render_run_status(info, self.state, branch_disposition(info, self.state)))
+        with self._status_lock:
+            self._write(os.path.join(self.path, "STATUS.md"),
+                        render_run_status(info, self.state, branch_disposition(info, self.state)))
         for task_id in self.state["order"]:
             tdir = self.task_dir(task_id)
             ledger = self.state["tasks"][task_id].get("ledger")
@@ -680,6 +688,24 @@ class Run:
             dirnames.sort()
             self._write(os.path.join(dirpath, "index.json"),
                         dump_json(render_index(self.path, dirpath)).decode("utf-8"))
+
+    def refresh_status(self, now=None):
+        """The heartbeat: rewrite the run's STATUS.md alone, with the age of what is in flight.
+        Nothing changes in the state while one long agent call runs, so without this the file
+        looks dead for half an hour. Observational: it never touches the state, and a failure to
+        render (the engine may be changing the state under us) just skips the beat."""
+        now = now or datetime.datetime.now(datetime.timezone.utc)
+        try:
+            text = render_run_status(self.info, self.state, None, now=now)
+        except Exception:                                   # noqa: BLE001 - never hurt the run
+            return False
+        target = os.path.join(self.path, "STATUS.md")
+        with self._status_lock:
+            tmp = target + ".beat"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.replace(tmp, target)
+        return True
 
     @staticmethod
     def _write(path, text):
@@ -872,7 +898,28 @@ def branch_disposition(info, state):
             "pushed": contains("refs/remotes/" + upstream) if merged and upstream else None}
 
 
-def render_run_status(info, state, disposition=None):
+def _in_flight(state, now):
+    """One line per agent call or command that has begun and not finished."""
+    lines = []
+    for it in state["intents"]:
+        if it.get("kind") not in ("agent", "command"):
+            continue
+        what = "agent call" if it["kind"] == "agent" else f"command `{it.get('command', '')}`"
+        line = f"- **{it.get('task', '?')}**: {what}"
+        if it.get("at"):
+            line += f", started {it['at'][11:19]} UTC"
+            if now is not None:
+                began = datetime.datetime.strptime(it["at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=datetime.timezone.utc)
+                secs = max(0, int((now - began).total_seconds()))
+                line += f", running for {secs // 60} min {secs % 60:02d} s"
+        if it.get("invocation_dir"):
+            line += f". Log: `{it['invocation_dir']}/`"
+        lines.append(line)
+    return lines
+
+
+def render_run_status(info, state, disposition=None, now=None):
     spend = state["spend"]
     unpriced = spend["unpriced"]
     lines = [f"# {info['workflow']} — run {info['run_id'][:8]} — "
@@ -912,6 +959,14 @@ def render_run_status(info, state, disposition=None):
             if selection:
                 lines.append(f"- **{tid}**: {selection['profile']} / {selection['model'] or 'provider default'} "
                              f"({selection['complexity']}; {selection['reason']}).")
+    flying = _in_flight(state, now) if state["status"] == "running" else []
+    if flying:
+        lines += ["", "## In flight"]
+        if now is not None:
+            lines.append(f"As of {now.strftime('%H:%M:%S')} UTC (refreshed about every "
+                         f"{HEARTBEAT_S} s while the runner is alive; an old time here means no "
+                         "runner is working on this run).")
+        lines += flying
     if state.get("stop_reason"):
         attention.append(f"- The run stopped: {state['stop_reason']}")
     if state["intents"]:

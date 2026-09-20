@@ -6,6 +6,7 @@ One producer owns the tree through checks, parallel review panels, rework and ac
 Ledger verdicts, candidate snapshots and durable budget reservations determine every transition.
 """
 
+import threading
 import datetime
 import hashlib
 import json
@@ -109,6 +110,22 @@ class Engine(ProviderRouting, Panels):
     # -- the loop (05, The engine loop) ------------------------------------------------------
 
     def execute(self):
+        """Run until nothing can start, with a heartbeat that keeps STATUS.md alive meanwhile."""
+        stop = threading.Event()
+
+        def beat():
+            while not stop.wait(record.HEARTBEAT_S):
+                self.run.refresh_status()
+
+        thread = threading.Thread(target=beat, name="status-heartbeat", daemon=True)
+        thread.start()
+        try:
+            return self._execute()
+        finally:
+            stop.set()
+            thread.join(timeout=5)
+
+    def _execute(self):
         """Run until nothing can start. Returns the exit code."""
         state = self.run.state
         try:

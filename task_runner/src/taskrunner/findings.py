@@ -76,7 +76,10 @@ def apply_review(ledger, reviewer, answer, candidate, changes):
     required = {f['id'] for f in blockers(ledger, rid)}
     supplied = [r['finding'] for r in answer['resolutions']]
     if len(supplied) != len(set(supplied)) or set(supplied) != required:
-        raise ProtocolError('resolutions must cover exactly this reviewer\'s open blocking findings, each once')
+        raise ProtocolError('resolutions must cover exactly this reviewer\'s open blocking findings, each once'
+                            + ': required ' + (', '.join(sorted(required)) or 'none, so resolutions must be []')
+                            + '; supplied ' + (', '.join(map(repr, supplied)) or 'none')
+                            + '. A new finding belongs in findings only, never in resolutions')
     result = copy.deepcopy(ledger)
     previous = result['reviewers'].get(rid, {})
     round_no = previous.get('round', 0) + 1

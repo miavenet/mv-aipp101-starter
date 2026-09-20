@@ -56,6 +56,20 @@ class Findings(unittest.TestCase):
         a, verdict = f.apply_review(a, R, review(resolutions=[resolution(status='unresolved')]), 'C2', {})
         self.assertEqual(verdict, 'block')
 
+    def test_a_new_finding_listed_as_a_resolution_is_rejected_with_the_required_ids(self):
+        """The field failure: a first-round reviewer put its own new finding, by title, in
+        resolutions. The diagnostic must say what is required so that the retry can comply."""
+        ledger = f.empty('make'); original = copy.deepcopy(ledger)
+        answer = review([finding()], resolutions=[dict(finding='Fix this', status='unresolved', note='n')])
+        with self.assertRaises(f.ProtocolError) as ctx:
+            f.apply_review(ledger, R, answer, 'C1', {})
+        self.assertIn('required none, so resolutions must be []', str(ctx.exception))
+        self.assertIn("supplied 'Fix this'", str(ctx.exception))
+        self.assertEqual(ledger, original)
+        with self.assertRaises(f.ProtocolError) as ctx:
+            f.apply_review(self.initial(), R, review(), 'C2', {})
+        self.assertIn('required make/PE-1', str(ctx.exception))
+
     def test_later_blockers_require_changed_location_or_cause(self):
         for location, cause, expected in [('src/a:2','','blocking'),('src/a:9','','advisory'),
                                           ('caller:8','src/a:2','blocking'),

@@ -244,6 +244,19 @@ def provided_context(git, base, candidate, paths, cap_bytes):
     return text, manifest
 
 
+def required_resolutions_text(open_findings):
+    """Say exactly what `resolutions` must hold. Reviewers otherwise list their own new findings
+    there, which the ledger has no id for, and a sound review is rejected as a protocol error."""
+    ids = [f['id'] for f in open_findings]
+    if not ids:
+        return ('Required `resolutions`: none. You have no open blocking finding from an earlier '
+                'round, so `resolutions` must be the empty list `[]`. Everything you find in this '
+                'review, blocking or advisory, goes in `findings` only; the runner assigns its id.')
+    return ('Required `resolutions`: exactly one entry for each of these finding ids, and no other '
+            'entry: ' + ', '.join(ids) + '. The `finding` field holds the id exactly as written '
+            'here, never a title. Anything new goes in `findings` only; the runner assigns its id.')
+
+
 def review_prompt(task, template, *, persona, target, brief, diff, full_path, open_findings,
                   round_number, caps):
     mode = ('Full review: this is your first sight of the candidate.' if round_number == 1 else
@@ -258,7 +271,8 @@ def review_prompt(task, template, *, persona, target, brief, diff, full_path, op
               'inputs': fence('inputs', json.dumps(target.get('inputs', []), indent=2)),
               'gates': fence('gates', json.dumps(target.get('gates', []))),
               'diff': diff_text(diff, caps['diff_cap_bytes'], full_path),
-              'findings': mode + '\n\n' + fence('open findings and author responses', findings_text),
+              'findings': mode + '\n\n' + fence('open findings and author responses', findings_text)
+                          + '\n\n' + required_resolutions_text(open_findings),
               'rules': rules_text([], [], []) + '\n- Do not change any file. Start a fresh review session.\n'
                        '- Locations use exact repository-relative path:line or path:line-line, with no prose suffix. '
                        'caused_by is an exact changed path:line reference or an empty string; put explanations in detail. '

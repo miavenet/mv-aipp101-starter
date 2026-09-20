@@ -140,5 +140,17 @@ class Prompts(unittest.TestCase):
         self.assertIn("answer with outcome \"blocked\"", rules)
 
 
+class RequiredResolutions(unittest.TestCase):
+    def test_first_round_requires_an_empty_list(self):
+        text = prompts.required_resolutions_text([])
+        self.assertIn('`resolutions` must be the empty list `[]`', text)
+        self.assertIn('goes in `findings` only', text)
+
+    def test_later_rounds_name_every_required_id(self):
+        text = prompts.required_resolutions_text([{'id': 'make/PE-1'}, {'id': 'make/PE-3'}])
+        self.assertIn('make/PE-1, make/PE-3', text)
+        self.assertIn('never a title', text)
+
+
 if __name__ == "__main__":
     unittest.main()

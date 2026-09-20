@@ -37,9 +37,10 @@ def prepare(kind, cwd, invocation_dir, env):
 
 def read_events(directory, limit=20):
     """Bound retained memory; tolerate async partial lines and malformed external telemetry."""
-    rows = deque(maxlen=limit)
-    paths = [Path(directory) / 'hooks.jsonl.1', Path(directory) / 'hooks.jsonl']
+    rows = []
+    paths = [Path(directory) / name for name in ('hooks.jsonl.1', 'hooks.jsonl', 'milestones.jsonl')]
     for path in paths:
+        recent = deque(maxlen=limit)
         try:
             with path.open() as source:
                 for line in source:
@@ -48,10 +49,11 @@ def read_events(directory, limit=20):
                     except ValueError:
                         continue
                     if isinstance(row, dict):
-                        rows.append(row)
+                        recent.append(row)
         except OSError:
             pass
-    return list(rows)
+        rows.extend(recent)
+    return sorted(rows, key=lambda row: str(row.get('ts') or row.get('timestamp') or ''))[-limit:]
 
 
 def render(run_path, task=None, limit=20):
@@ -70,6 +72,8 @@ def render(run_path, task=None, limit=20):
             event = row.get('event') or row.get('hook_event_name') or 'unknown'
             summary = row.get('result') or row.get('payload', {}).get('summary') or row.get('tool_name') or ''
             summary = ' '.join(str(summary).split())[:300]
+            if event == 'AgentCheckpoint' and not summary.startswith('agent-reported '):
+                summary = 'agent-reported ' + summary
             observations.append((stamp, f"{stamp} {info.get('task', '?')} {event} {summary}"))
     lines = [f"Agent activity: {len(invocations)} invocation(s); observational only."]
     lines.extend(text for _, text in sorted(observations)[-limit:])

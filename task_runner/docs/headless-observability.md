@@ -62,3 +62,19 @@ and [Claude hook reference](https://code.claude.com/docs/en/hooks).
 
 Scratch paths are local evidence, not portable dependencies. Run `doctor` and a
 small workflow on the target host before relying on its native hook behavior.
+
+## Agent-written milestones and crash recovery
+
+The [agent-checkpoints skill](../../skills/agent-checkpoints/SKILL.md) adds explicit
+progress against task requirements and durable copies of selected work. Give writers
+that skill in their task brief and use the existing invocation-scoped
+`HOOK_LOG_DIR/checkpoints` store. The helper writes a separate `milestones.jsonl` beside
+the native logs; `runner activity` merges these events chronologically and labels them
+**agent-reported**. The helper's `status` shows the full saved report and artifact hashes.
+
+Checkpoints survive worktree rollback because they live in the invocation record. They
+are recovery material, not producer acceptance: reconcile the runner, verify the saved
+bytes, compare the current base and inspect the diff before recovering any files. Read-only
+reviewers retain their restricted tools; a coordinator must persist their emitted
+milestones if no dedicated progress-writing channel is provided. Skill availability alone
+does not activate checkpointing in an already-running or frozen workflow.

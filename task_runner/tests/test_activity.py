@@ -76,3 +76,17 @@ class Activity(unittest.TestCase):
         self.assertEqual(rows[-1]['session_id'],'abc')
         self.assertEqual(rows[-1]['hook_event_name'],'ExecStream.item.completed')
         self.assertIn('python3 test.py',activity.render(self.root))
+
+    def test_checkpoint_events_merge_with_native_activity_by_time(self):
+        inv = self.root / 'milestones'; inv.mkdir()
+        activity.prepare('claude', str(ROOT), inv, {'TASK_RUNNER_TASK': 'design'})
+        hooks = inv / 'hooks'
+        (hooks / 'hooks.jsonl').write_text(json.dumps({'ts':'2026-09-20T12:00:03Z','event':'PostToolUse','result':'native newest'})+'\n')
+        (hooks / 'milestones.jsonl').write_text('\n'.join(json.dumps({'ts':f'2026-09-20T12:00:0{n}Z',
+            'event':'AgentCheckpoint','result':f'milestone {n}'}) for n in (1,2))+'\n{"event":')
+        rows = activity.read_events(hooks, limit=2)
+        self.assertEqual([r['event'] for r in rows], ['AgentCheckpoint','PostToolUse'])
+        display = activity.render(self.root, limit=2)
+        self.assertIn('AgentCheckpoint agent-reported milestone 2', display)
+        self.assertIn('native newest', display)
+        self.assertNotIn('milestone 1', display)

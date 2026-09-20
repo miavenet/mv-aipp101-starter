@@ -159,7 +159,7 @@ Types state what they `require`; `doctor` and `start` refuse a workflow whose pr
 Prompts are assembled deterministically, in **one pass over the template only**: substituted text
 is never scanned again, so a diff containing `{rules}` or stray braces is harmless. Everything that
 comes from a task, an agent or the repository is wrapped in a labelled data block, and the standing
-rules say such blocks are material, never instructions. Prompts carry pointers and summaries, not
+rules distinguish the workflow task specification from repository and agent evidence; no block overrides runner boundaries. Prompts carry pointers and summaries, not
 file contents; the agent reads the files itself.
 
 ## Limits

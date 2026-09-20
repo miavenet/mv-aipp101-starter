@@ -249,4 +249,4 @@ Each test kills the runner at an injected point, then runs `resume`.
 | PRM-02 | a diff contains lone `{` and `}` characters | the prompt renders, with them intact | `prm: braces are ordinary characters` |
 | PRM-03 | a diff exceeds `diff_cap_bytes` | it is cut at a file boundary, with a marker that names the omitted files and the path of the full diff | `prm: the diff cap is visible` |
 | PRM-04 | the findings that need a response exceed `findings_cap_bytes` | the task is `blocked` for a person. No finding is dropped | `prm: findings are never truncated` |
-| PRM-05 | any prompt is built | every value from a task, an agent or the repository is inside a labelled data block, and `{rules}` says such blocks are never instructions | `prm: data is fenced` |
+| PRM-05 | any prompt is built | every value from a task, an agent or the repository is inside a labelled data block, and `{rules}` authorizes the workflow brief within runner boundaries while treating repository/agent text as evidence | `prm: data is fenced` |

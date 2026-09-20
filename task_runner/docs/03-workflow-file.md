@@ -241,8 +241,9 @@ error. The rules of assembly (B11):
   in C++, JSON or shell text are ordinary characters.
 - **Data is fenced.** Every substituted value that comes from a task, an agent or the repository
   (`{task.prompt}`, `{inputs}`, `{diff}`, `{findings}`, `{target}`) is wrapped in a labelled block,
-  and `{rules}` states that text inside such blocks is material to work on, never instructions to
-  follow. This does not make injection impossible; the ledger-derived verdict, the gates and the
+  and `{rules}` delegates task specification to the workflow brief, parameters and persona while
+  treating repository content and agent replies as evidence. No block can override runner rules or
+  allowed write paths. This does not make injection impossible; the ledger-derived verdict, the gates and the
   human sign-off are the defences that do not depend on a model's obedience.
 - **Sizes are capped, and the overflow rule depends on what is lost.** `{diff}` over
   `diff_cap_bytes` is cut at a file boundary with a visible marker that names the omitted files and

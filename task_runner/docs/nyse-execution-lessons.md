@@ -133,3 +133,20 @@ Use stable incident IDs. Improvements listed here are proposals unless marked sh
 
 2026-09-20 14:27 UTC: candidate 7 pinned, both contract command gates passed, and two
 review calls started (`op-0037`, `op-0038`). This is review entry, not contract acceptance.
+
+### Update — 2026-09-20 14:43 UTC
+
+The fresh panel produced actionable blocking findings: PE-10 clearing visibility,
+PE-11 initial gap timer, PE-12 multiple EOF holes, and SC-8 null-padded ticker fields.
+The author subsequently reported fixing all four; review acceptance is still pending.
+This shows progress beyond the exhausted panel, but does not yet demonstrate that the
+new retry diagnostic corrected malformed references in a live rework review.
+
+R02 recurred inside the native StructuredOutput tool: hooks at 14:43:12 and 14:43:30
+record rejected summaries of 2,167 and 2,062 characters against the 2,000-character
+limit. These are tool-level repair attempts within the invocation, not evidence of
+another runner-level retry. A comfortable summary target below the hard limit may be
+more useful than telling agents merely to satisfy the maximum. Keep detailed responses
+in their dedicated fields and artifacts. This remains a proposed prompt improvement.
+Known spend at observation: $51.64 / $100 plus three calls with unknown usage; 116
+minutes of recorded agent time. No preparation producer accepted yet.

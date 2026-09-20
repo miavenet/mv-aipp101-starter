@@ -204,12 +204,20 @@ class CodexEvents:
         self.failed = ""
         self.environment = ""
         self.malformed = False
+        self.omitted_events = 0
         self.has_usage = False
         self.usage = {"tokens_in": 0, "tokens_out": 0, "cached_tokens_in": 0}
 
     def feed(self, data):
         for line in data.splitlines():
             if not line.strip():
+                continue
+            if line.strip() in (proc.OVERLONG_PLACEHOLDER, proc.OVERLONG_PLACEHOLDER.decode()):
+                # The sink withheld one event longer than its line limit: in practice a
+                # command_execution item carrying a large file the agent read. It is not a
+                # malformed stream. The answer and the terminal event are still required, so an
+                # omitted final message fails later for want of a valid answer, never silently.
+                self.omitted_events += 1
                 continue
             try:
                 event = json.loads(line)

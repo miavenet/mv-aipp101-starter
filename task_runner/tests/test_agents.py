@@ -209,6 +209,46 @@ class CommandAdapter(unittest.TestCase):
         self.assertEqual(slow[0]["result"], "timeout")
 
 
+class CodexStream(unittest.TestCase):
+    """agent: an event longer than the log's line limit is withheld by the sink, not malformed"""
+
+    @staticmethod
+    def events(*lines):
+        ev = agents.CodexEvents()
+        ev.feed(b"".join(line + b"\n" for line in lines))
+        return ev
+
+    RES = proc.ProcResult("ok", 0, b"", b"", 1.0, None)
+    START = b'{"type":"thread.started","thread_id":"t1"}'
+    TURN = b'{"type":"turn.started"}'
+    ANSWER = json.dumps({"type": "item.completed", "item": {
+        "type": "agent_message", "text": json.dumps({"verdict": "pass"})}}).encode()
+    DONE = b'{"type":"turn.completed","usage":{"input_tokens":5,"output_tokens":2}}'
+
+    def test_an_overlong_event_does_not_reject_a_valid_answer(self):
+        sink_dir = tempfile.mkdtemp()
+        seen = []
+        sink = proc._Sink(os.path.join(sink_dir, "stdout.log"), seen.append)
+        big = json.dumps({"type": "item.completed", "item": {
+            "type": "command_execution", "aggregated_output": "x" * (proc.LINE_LIMIT + 10)}}).encode()
+        for line in (self.START, self.TURN, big, self.ANSWER, self.DONE):
+            sink.feed(line + b"\n")
+        sink.close()
+        self.assertIn(proc.OVERLONG_PLACEHOLDER + b"\n", seen)
+        ev = agents.CodexEvents()
+        for chunk in seen:
+            ev.feed(chunk)
+        result = ev.result(self.RES)
+        self.assertEqual((result.status, ev.omitted_events), (agents.OK, 1))
+        self.assertEqual(result.structured, {"verdict": "pass"})
+
+    def test_garbage_is_still_malformed_and_an_omitted_answer_still_fails(self):
+        self.assertEqual(self.events(self.START, self.TURN, b"not json", self.ANSWER, self.DONE)
+                         .result(self.RES).status, agents.PROTOCOL_ERROR)
+        lost = self.events(self.START, self.TURN, proc.OVERLONG_PLACEHOLDER, self.DONE).result(self.RES)
+        self.assertEqual(lost.status, agents.PROTOCOL_ERROR)          # no answer survived
+
+
 class CommandRecovery(EngineCase):
     def test_a_live_verifier_is_stopped_before_resume(self):
         marker = os.path.join(self.side, "started")

@@ -161,6 +161,14 @@ def _finding(f):
     return "\n".join(lines)
 
 
+def response_ids_text(feedback):
+    ids = [f['id'] for f in (feedback or {}).get('needing', []) if isinstance(f, dict) and 'id' in f]
+    if not ids:
+        return '\nNo review finding IDs require a response. Return "responses": []. Do not put accomplishments or self-found issues in responses.\n'
+    return ('\nThe responses array must cover exactly these assigned finding IDs, once each: '
+            + json.dumps(ids) + '. Do not invent IDs or use descriptions as IDs.\n')
+
+
 # -- whole prompts --------------------------------------------------------------------------------
 
 def produce_prompt(task, template, *, brief, inputs, feedback, attempt, frozen, caps):
@@ -174,7 +182,7 @@ def produce_prompt(task, template, *, brief, inputs, feedback, attempt, frozen, 
         "rules": rules_text(task.get("protected", []), frozen, task.get("writes")),
         "findings": feedback_text(feedback, caps["findings_cap_bytes"]),
         "attempt": str(attempt), "max_attempts": str(task.get("max_attempts", "")),
-        "result_schema": result_schema_text("produce"),
+        "result_schema": result_schema_text("produce") + response_ids_text(feedback),
     }
     for name, value in (task.get("params") or {}).items():
         values[f"param.{name}"] = "\n" + fence(f"parameter {name}", str(value)) + "\n"
@@ -185,7 +193,7 @@ def rework_prompt(task, *, feedback, caps):
     """What a continued session is sent: only the feedback, and the shape of the answer again."""
     return (feedback_text(feedback, caps["findings_cap_bytes"])
             + "\n\nFix the work in place. The same rules and the same paths apply.\n\n"
-            + result_schema_text("produce"))
+            + result_schema_text("produce") + response_ids_text(feedback))
 
 
 class EvidenceTooLarge(Exception):

@@ -174,6 +174,20 @@ gate = ["true"]
         self.assertEqual(self.read_json("make", "attempt-1", "result.json")["agent_calls"], 3)
         self.check_invariants()
 
+    def test_invented_response_id_retry_gets_error_and_keeps_candidate(self):
+        self.workflow(ONE)
+        self.script([{'write': {'src/a.txt': 'good\n'}, 'answer': done(responses=[
+            dict(finding='I fixed a typo', action='fixed', note='Self-found')])},
+            {'answer': done(), 'match': 'which was not listed as needing a response'}])
+        self.assertEqual(self.start(), 0, self.output)
+        self.assertEqual(self.the_run().state['tasks']['make']['attempts_used'], 1)
+        with open(self.task_file('make', 'attempt-1', 'invocation-2', 'prompt.md')) as fh:
+            prompt = fh.read()
+        self.assertIn('Return "responses": []', prompt)
+        self.assertIn('I fixed a typo', prompt)
+        self.assertIn('Do not repeat completed', prompt)
+        self.check_invariants()
+
     def test_verifying_check(self):
         """acc: verifying check (ACC-11)"""
         self.workflow(ONE + '''

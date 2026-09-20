@@ -236,3 +236,44 @@ commits and preserved contract `3f7337b`. The remaining tasks now use Sol. Resum
 the main runner, including the 4,000-character summary cap and actionable retry feedback.
 Follow-up regression: a provider-only replan must not silently swap library versions or
 reopen accepted work; show template provenance in the change preview.
+
+### NYSE-R08 — producer retries repeated work without actionable feedback
+
+Sol authored and checkpointed the scenario artifacts, but final answers repeatedly put
+self-found issues into `responses[].finding` instead of assigned ledger IDs. No IDs
+were assigned, so the correct response list was empty. The producer loop recorded the
+validation error but rebuilt the prompt without it, repeating work across three attempts
+and nine calls. This is a protocol failure, not observed quota exhaustion. Current
+status reported 230 minutes of aggregate agent time and no accepted scenario artifact.
+
+Fix: producer prompts explicitly list required finding IDs (or require `responses: []`);
+protocol retries receive their recorded validation diagnostic and instructions to reuse
+saved work. Regression scenario proves a fabricated ID is rejected, the next invocation
+receives the exact error, the saved candidate survives, and acceptance takes one attempt.
+Do not reinterpret arbitrary descriptions as IDs or silently discard invalid responses.
+
+### Task-based provider selection — requested direction, not implemented
+
+The user authorizes switching Codex to Claude when Codex hits a limit or reports reliable
+near-limit evidence. Absence of rate-limit telemetry is unknown headroom, not permission
+to invent a remaining percentage. Qualify the selected profile before dispatch. Current
+adapter-reported token totals are not account quota; investigate their accounting semantics
+before using them for scheduling or cost estimates.
+
+Keep a future selector small and above existing adapters. Inputs: task kind, required
+capabilities, explicit permission mode, context needs and configured provider preferences.
+Filter to qualified profiles satisfying those controls; among them select an available
+provider using observed quota/reset signals and bounded cooldowns. Persist the selection,
+reason, model/profile, telemetry timestamp and fallback history in the run record.
+
+Distinguish quota/environment failure, invalid response, substantive findings and timeout.
+Quota can choose another already-authorized provider. Invalid responses get bounded
+response repair; real findings return to implementation. A provider switch starts a new
+session from durable artifacts, never another provider's session ID, and must not replay
+uncertain external effects. Retain independent reviewer identity and read-only controls.
+Do not treat switching providers as a way to discard blockers or reset spending history.
+
+Useful future scenarios: quota response preserves candidate and attempt allowance;
+near-limit telemetry selects the configured fallback at a safe boundary; stale/missing
+telemetry makes no headroom claim; no qualified fallback blocks visibly; provider switch
+retains findings and acceptance history; repeated format failure does not cycle providers.

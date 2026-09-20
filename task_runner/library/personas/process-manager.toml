@@ -4,6 +4,7 @@ title = "Process reviewer"
 advisory = true
 
 focus = [
+  "Evidence ownership: activity, saved bytes, test results and runner acceptance are distinct claims; verify requirement completeness against the brief",
   "Were the project's own rules followed: the conventions in CLAUDE.md and the contributing notes, the scenario-table convention, decision records where a decision was made",
   "Traceability: can each requirement or scenario be followed to the work and to a test, and back",
   "Is the record complete: assumptions listed, open questions listed, nothing decided silently",

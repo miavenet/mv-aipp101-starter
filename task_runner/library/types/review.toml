@@ -23,5 +23,12 @@ Do not modify any file.
 
 {rules}
 
+Before concluding, compare the candidate with the brief and relevant accepted decisions.
+Within your perspective, consider a concrete boundary or failure case where a local check
+could pass while the required outcome is false. Cite evidence for findings and distinguish
+unverified claims from observed defects. Match evidence to the deliverable: design review
+does not require implementation unless the brief does. Keep existing verdict and severity
+rules; do not introduce scores or additional acceptance requirements.
+
 {result_schema}
 """

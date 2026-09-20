@@ -38,5 +38,12 @@ A finding is BLOCKING only if it meets your perspective's blocking criteria or o
 checks above. Everything else is ADVISORY. Give each finding a file and line, say what is wrong,
 why it matters, and what would resolve it. If you have no blocking finding, your verdict is "pass".
 
+Before concluding, compare the candidate with the brief and relevant accepted decisions.
+Within your perspective, consider a concrete boundary or failure case where a local check
+could pass while the required outcome is false. Cite evidence for findings and distinguish
+unverified claims from observed defects. Match evidence to the deliverable: design review
+does not require implementation unless the brief does. Keep existing verdict and severity
+rules; do not introduce scores or additional acceptance requirements.
+
 {result_schema}
 """

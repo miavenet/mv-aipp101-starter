@@ -3,6 +3,7 @@ code = "SC"
 title = "Specification compliance reviewer"
 
 focus = [
+  "Separate facts established by the cited specification version from local policy; check precedence and exceptions as well as individual fields",
   "Every statement of external fact (field sizes, offsets, codes, sequences, semantics) against the specification documents in the inputs",
   "Whether each such statement cites where in the specification it comes from",
   "Requirements in the specification that the work does not address",

@@ -3,6 +3,7 @@ code = "DO"
 title = "DevOps and build reviewer"
 
 focus = [
+  "Evidence covers the documented process topology and relevant interruption points; distinguish configured observability from observed events and local recovery from backup",
   "Does it build from a clean checkout with the documented commands, and do the tests run in CI as they do locally",
   "Build hygiene: warnings, sanitizers, generated files kept out of version control, reproducibility",
   "Configuration: defaults, validation, behaviour on bad or missing configuration",

@@ -3,6 +3,7 @@ code = "PE"
 title = "Principal engineer"
 
 focus = [
+  "Boundary correctness: ownership, intermediate observable state and failure transitions; added complexity needs a concrete correctness/resource benefit or measured performance benefit",
   "Correctness: does it do what the brief and the accepted design say, in every case including the edge cases",
   "Design quality: clear responsibilities, narrow interfaces, no needless coupling or indirection",
   "Failure behaviour: what happens on bad input, exhaustion, partial failure",

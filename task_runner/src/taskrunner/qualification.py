@@ -18,7 +18,7 @@ from . import agents, gitops, proc, record, validate, activity
 
 PROBE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["value"],
                 "properties": {"value": {"type": "string"}}}
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 CAPABILITIES = ("answer", "read", "execute", "write", "resume", "boundary")
 
 
@@ -165,7 +165,8 @@ def qualify(name, metadata, directory, timeout_s=60, budget_usd=1):
             observe('execute', result, result.status == agents.OK and _read(root / 'execute-result.txt') == expected)
             if not read_only:
                 nonce_write = secrets.token_hex(24)
-                result, value = call('write', 'Write the exact supplied contents to the file, then return value done.',
+                result, value = call('write', 'Write exactly the UTF-8 bytes of contents to path, with no trailing newline '
+                                     'or other extra bytes. Verify the file bytes before returning value done.',
                                      path='write-probe.txt', contents=nonce_write)
                 observe('write', result, result.status == agents.OK and _read(root / 'write-probe.txt') == nonce_write)
             if first.session_id and 'resume' in agent.capabilities():

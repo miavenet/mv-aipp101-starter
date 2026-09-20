@@ -1,9 +1,9 @@
 # 4 — Safety: git, the record and recovery
 
 > [!NOTE]
-> **Status: partly verified at stage 3.** Snapshots, restore, commit, intent recovery, write protection
-> and human pauses are exercised through the engine and the CLI. See the
-> [walkthrough](../stage-3-walkthrough.md). Review panels and replan remain design for later stages.
+> **Status: checked against stages 1–6 implementation and tests.** The
+> [stage 5](../stage-5-walkthrough.md) and [stage 6](../stage-6-walkthrough.md)
+> walkthroughs record executable panel and replan examples; live model checks are separate.
 
 The runner lets agents write to your repository unattended. This chapter explains why that cannot
 corrupt it, even when an agent misbehaves, a gate misbehaves, or the machine dies mid-step.
@@ -139,7 +139,9 @@ A process is identified by pid, start time **and boot id**, because pids are reu
 every finished result, verdict and verification), and checks them before and after every agent call
 and every command. A change the runner did not make fails that job.
 
-The path of the record is given only to task types that need it (`summarize`). Gates never get it.
+`TASK_RUNNER_RUN_DIR` is set only for types that request it (`summarize`). Hook environments also
+carry their invocation path for correlation. Paths are not secrets or access controls: integrity
+checks enforce the record contract. Gates receive the reduced command environment.
 
 ## Pauses hold the tree
 

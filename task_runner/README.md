@@ -81,3 +81,5 @@ research and the prototype's findings still stand.
 
 Headless agents expose per-invocation hook logs and `runner activity`; see
 [observability](docs/headless-observability.md) for verified Claude/Codex behavior.
+
+[Stage 7 live results](docs/stage-7-walkthrough.md) record the real review/rework cycle and pending human sign-off.

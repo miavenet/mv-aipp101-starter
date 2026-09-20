@@ -1,7 +1,9 @@
 # 3 — Review panels and findings
 
 > [!NOTE]
-> **Status: design.** Written from the design documents, not yet checked against code.
+> **Status: checked against stages 1–6 implementation and tests.** The
+> [stage 5](../stage-5-walkthrough.md) and [stage 6](../stage-6-walkthrough.md)
+> walkthroughs record executable panel and replan examples; live model checks are separate.
 
 Several reviewers on one piece of work is where unattended pipelines usually break: they loop, they
 contradict each other, or their objections are "fixed" with nobody checking. This chapter explains

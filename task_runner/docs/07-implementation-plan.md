@@ -1,7 +1,7 @@
 # 07 — Implementation plan
 
 Status: **the owner gave the go-ahead on 2026-09-19, after the adversarial review was answered
-(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is done: 116 tests pass in all, covering GIT-01 to GIT-16, REC-01 to REC-13 and RUN-01, 02, 07, 08, 11, 16, 17, several at primitive level until the engine exists. `start` creates a run and stops in stage 2. Stage 3 is now done: 196 tests pass; `command` agents, producer transactions, gates/checks, human decisions, resume and retry work end to end. Stage 4 is now done: 227 runner tests pass; headless adapters, observed capability qualification, caching and gate preflight are implemented. Stage 5 is now done: findings, panels, bounded parallel readers, resolution and budget pauses are implemented. Stage 6 is now done: frozen replans and resumable reopening are implemented. The live check is next.** Progress is recorded in the
+(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is done: 116 tests pass in all, covering GIT-01 to GIT-16, REC-01 to REC-13 and RUN-01, 02, 07, 08, 11, 16, 17, several at primitive level until the engine exists. `start` creates a run and stops in stage 2. Stage 3 is now done: 196 tests pass; `command` agents, producer transactions, gates/checks, human decisions, resume and retry work end to end. Stage 4 is now done: 227 runner tests pass; headless adapters, observed capability qualification, caching and gate preflight are implemented. Stage 5 is now done: findings, panels, bounded parallel readers, resolution and budget pauses are implemented. Stage 6 is now done: frozen replans and resumable reopening are implemented. The live check has exercised review/rework, implementation and record comprehension; its final human sign-off is pending.** Progress is recorded in the
 [task_runner README](../README.md).
 
 ## Approach
@@ -150,11 +150,12 @@ small model. It passes when:
 - a second agent, given only the run directory's path and the question "what happened in this run,
   and what is open?", answers correctly from the record. This is the test of requirement R5.
 
-Expected cost: a few dollars. **Codex takes part only in the roles `doctor` qualifies it for.** In
-this container its sandbox cannot start, and the prototype's two Codex reviews contain no tool
-events at all: they judged the diff they were sent and never read the repository. So here Codex is
-at most a text-only reviewer, explicitly configured and labelled as such, until it runs on a host
-where its sandbox starts.
+The [live acceptance record](stage-7-walkthrough.md) documents the actual results and pending
+human decision. Opus 5 was used at the owner's request. A Codex writer also passed qualification
+with an explicitly configured `danger-full-access` profile. Controlled Codex sandbox execution
+remains unavailable on this host; there is no automatic fallback to bypass it. Native Claude hooks
+and explicitly labelled Codex exec-stream telemetry are described in
+[headless observability](headless-observability.md).
 
 ### Stage 9: the tutorial and the runbook
 
@@ -185,8 +186,9 @@ task with build and test gates, and panels chosen per step. Suggested panels:
 | Hex fixtures | spec-compliance, then a `human` sign-off, which the project rules already require |
 | The workflow itself, before it runs | process-manager, technical-project-manager |
 
-One change outside the runner is needed: an id-prefix filter for
-`nyse-handler/tools/check_scenarios.py`, so a gate can demand "every BOOK- scenario has a test".
+One change outside the runner is needed: stronger scenario coverage validation in
+`nyse-handler/tools/check_scenarios.py`: the design branch already has `--module` filtering, but
+empty selections and incomplete message families must not count as coverage.
 Workflow-wide `protected`: the spec notes, the scenario tables, reviewed fixtures, golden files, the
 gate scripts. Run the first producer alone and read its whole record before letting the run continue.
 

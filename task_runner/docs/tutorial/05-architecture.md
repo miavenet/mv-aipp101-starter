@@ -1,9 +1,9 @@
 # 5 — Architecture
 
 > [!NOTE]
-> **Status: design, with the stage 3 subset implemented**. Producer transactions, gates, checks,
-> human decisions and the command adapter now run; panels, headless adapters and budgets remain
-> later-stage work. See the [verified CLI walkthrough](../stage-3-walkthrough.md).
+> **Status: checked against stages 1–6 implementation and tests.** The
+> [stage 5](../stage-5-walkthrough.md) and [stage 6](../stage-6-walkthrough.md)
+> walkthroughs record executable panel and replan examples; live model checks are separate.
 
 ## The modules, and who is allowed to decide
 
@@ -17,6 +17,9 @@ flowchart TB
     subgraph decide["Decides"]
         ENG["engine<br/>scheduler + task lifecycle"]
         FND["findings<br/>the ledger and its rules"]
+        PANEL["panels<br/>parallel readers and ordered results"]
+        BUD["budgets<br/>reserve and settle spend"]
+        RP["replan<br/>freeze definitions and reopen work"]
     end
     subgraph facts["Report facts only"]
         AG["agents<br/>claude, codex, any command"]
@@ -26,6 +29,11 @@ flowchart TB
         REC["record<br/>state, intents, events, STATUS.md"]
     end
     CLI["cli"] --> ENG
+    CLI --> RP
+    ENG --> PANEL
+    PANEL --> BUD
+    RP --> GIT
+    RP --> REC
     WF --> PAT
     WF --> ENG
     ENG <--> PR
@@ -37,28 +45,26 @@ flowchart TB
     ENG <--> REC
 ```
 
-The design choice to notice: **only `engine` and `findings` decide anything**, and they decide only
-from exit codes, validated answer fields, ledger status and counters. The modules that touch the
-outside world report facts. That keeps the part that must be deterministic small and free of I/O,
-so it can be tested exhaustively with a scripted agent and no model.
+Lifecycle decisions live in `engine` and its `panels` mixin. `findings` computes ledger transitions,
+`budgets` reserves spending, and `replan` coordinates definition changes and reverts. Agent and
+command adapters report observations. The pure ledger transitions and scripted execution tests
+exercise decisions without paid model calls.
 
 ## The engine loop
 
 ```mermaid
 flowchart TB
-    L["load state, reconcile unfinished intents"] --> AP["apply finished work<br/>(in workflow order, never arrival order)"]
-    AP --> Q{"anything running?"}
-    Q -- yes --> WAIT["wait for any job to finish"]
-    Q -- no --> AP2{"is there an active producer?"}
-    AP2 -- yes --> NEXT["start its next step:<br/>gate or writing check (alone),<br/>its ready readers (up to max_parallel),<br/>its rework, its commit, or its set-aside"]
-    AP2 -- no --> STAND["start standalone ready readers,<br/>when none run, the first ready producer<br/>in workflow order becomes active"]
-    NEXT --> CAN{"could anything start?"}
-    STAND --> CAN
-    CAN -- no --> STOP["stop: done / needs_human / stopped / failed"]
-    CAN -- yes --> WAIT
-    WAIT --> SAVE["save state, regenerate STATUS.md"]
-    SAVE --> AP
-
+    L["load frozen workflow and reconcile intents"] --> S["settle completed work and mark skipped dependants"]
+    S --> A{"active producer?"}
+    A -- yes --> P["advance its transaction:<br/>author, gates, check/panel batch,<br/>rework, acceptance or set-aside"]
+    P --> W{"needs a pause?"}
+    W -- no --> S
+    W -- yes --> STOP["stop with recorded state"]
+    A -- no --> N{"next ready task?"}
+    N -- producer --> B["begin producer transaction"] --> S
+    N -- check --> C["run standalone check"] --> S
+    N -- human --> H["mark waiting for approval"] --> S
+    N -- none --> STOP
     classDef stop fill:#a32d2d,stroke:#741f1f,color:#ffffff
     class STOP stop
 ```
@@ -92,8 +98,9 @@ gantt
 
 The hour marks illustrate ordering and overlap; they are not estimates of actual run time.
 
-Inside a transaction, either **one writer** runs or **any number of readers** run, never both. This
-is where the parallelism is: a five-person panel takes as long as its slowest member.
+Inside a transaction, either **one writer** runs or a reader batch runs, never both. A batch
+has at most `max_parallel` readers and completes before its results are applied in task order.
+Standalone checks are sequential; concurrent readers belong to the active producer’s panel.
 
 ## Driving agents
 
@@ -153,6 +160,12 @@ capability, and every probe is judged by an **effect the runner observes itself*
 
 Types state what they `require`; `doctor` and `start` refuse a workflow whose profiles fall short.
 `validate` does not check this, so it works with no agent installed.
+
+## Observability
+
+`activity` routes native hook logs into each invocation. Codex exec events also pass through the
+existing logger with an explicit `ExecStream.*` origin. `runner activity` reads these logs while
+agents run. Observations do not decide acceptance. See [headless observability](../headless-observability.md).
 
 ## Prompts
 

@@ -237,6 +237,104 @@ without a completed call — but takes the diagnostic it has:
 `job.get('protocol_error') or 'interrupted calls exhausted protocol retries'`. A genuinely
 interrupted call has no answer to summarise, so it contributes a pointer-free entry as today.
 
+#### Read path for a job saved before this change
+
+`job["invocation"]` is written by `reader_batch` when it dispatches a call, so **every job in a
+state written before this change lacks it** — including a job that already carries a completed
+`raw_outcome`. That state is reachable and is replayed: `reader_batch` writes each outcome onto its
+job and checkpoints at `panel:outcomes-recorded` before `collect_reader` has run at all
+(`panels.py:339-348`), and on `resume` `panels.panel` collects every job that has a `raw_outcome`
+*before* it dispatches anything (`panels.py:101-105`). If that persisted answer is one the ledger
+check refuses, it reaches the rejection transition with no `invocation` key: a direct
+implementation raises `KeyError` on a run that was working before the change, and the summary, the
+pointer and the `outcome.json` correction requirement 1 asks for are all unavailable. The brief's
+rule — a state schema change needs a read path for old states — applies to this field exactly as it
+does to `block_kind`.
+
+The read path **recovers the identity from the record rather than inventing one**, decides once,
+and persists the decision it took:
+
+```python
+# panels.py — run for every review job of a restored panel, before the replay loop in `panel`.
+# reject_answer calls it too, as a safety net for a job that somehow reached rejection without
+# having been through that pass; for a job that has been, it returns the stored decision.
+def adopt_invocation(self, job):
+    """Decide, once per dispatch, which invocation directory a job saved before this change is
+    carrying, and record that decision in job['invocation'] — the path, or None when the call
+    cannot be identified with certainty. Returns the stored value. Never dispatches, never writes
+    inside an invocation directory, and never touches tries."""
+```
+
+1. **If the key `invocation` is already present on the job, its value is returned unchanged and
+   nothing is re-derived — including when that value is `None`.** A stored `None` is a decision
+   ("this dispatch's call could not be identified"), not an absence, and it is as durable as a
+   stored path. Every job dispatched by the new code takes this path, and so does every job the
+   pre-replay pass has already decided, whichever way it decided. This is what makes a refusal
+   survive the rest of the step: `collect_reader` pops `raw_outcome` (`panels.py:172`) before the
+   rejection transition runs, so a rule that re-derived the answer at `reject_answer` time would
+   be re-deciding on strictly less evidence and could adopt a directory it had just refused.
+2. If `job["kind"]` is not `review`, `None` is stored and returned.
+3. Otherwise the candidate is the **highest-numbered** `invocation-*` directory under
+   `job["directory"]` — the job's most recent dispatch, which is the call the job is carrying.
+   Three facts from the existing code make that exact rather than likely: `Run._next_numbered`
+   allocates strictly above the highest number already present (`record.py:575-589`), so numbers
+   only ever increase within a round directory; `panels.py:291` is the **only** place in the
+   runner that creates an invocation directory under a review round; and a job is never
+   dispatched a second time before its previous outcome has been collected, because
+   `collect_reader` pops `raw_outcome` and `panel` runs its replay loop over every carried
+   `raw_outcome` before the dispatch loop can select anything (`panels.py:101-105`). If there is
+   no `invocation-*` directory at all — a job never dispatched — `None` is stored.
+4. **`job["tries"]` is not used, and must not be.** It is a retry budget, not a directory index:
+   `collect_reader` refunds a try on a quota or an environment failure
+   (`panels.py:175-183`, `job['tries'] = max(0, job['tries'] - 1)`), while the directory number
+   keeps climbing. After an `invocation-1` that hit the provider's quota, `invocation-2`'s
+   malformed answer is checkpointed with `tries == 1`; a tries-indexed rule would name
+   `invocation-1` — an existing directory, so no fallback would fire — and would then hang this
+   answer's summary on the quota call and rewrite **that** call's `outcome.json`, while leaving
+   the invocation that actually produced the answer recorded `ok`. Directory order is unaffected
+   by refunds, so the rule above is immune to this and to any other accounting of tries.
+5. The candidate is **corroborated before it is stored, with the strongest evidence available at
+   this one decision point, and a contradiction refuses rather than guesses.** It must contain an
+   `outcome.json`. When the job still carries a `raw_outcome` — the state this upgrade path exists
+   for, `panel:outcomes-recorded` — the parsed file must also **equal** that `raw_outcome` without
+   its `structured` key: `reader_batch` writes the file from `outcome.outcome()` and builds
+   `raw_outcome` from the same object in the next statement (`panels.py:341-342`), and
+   `AgentResult.outcome()` is a plain snapshot (`status`, `error`, `seconds`, `session_id`,
+   `cost_usd`, `usage`), so the comparison is an exact equality test, not a heuristic. If the file
+   is missing, or is present and does not match, `None` is stored: the refusal is recorded, and
+   step 1 then holds it for the rest of the step.
+
+For an old state saved *after* collection, the job has no `raw_outcome` to compare against and the
+corroboration is the weaker one — the file exists. Identity there rests on step 3, which does not
+depend on the comparison; the comparison only ever adds certainty where the evidence is present,
+and never turns a refusal into an adoption, because the refusal has already been stored.
+
+The function only ever **reads** the run directory. It never renames, rewrites or deletes anything
+inside an invocation, so no earlier invocation — a refunded quota call included — can be altered by
+the recovery itself; and because step 3 can only select the most recent directory, no earlier
+invocation can be named by the correction that follows either.
+
+`panel` runs it over every review job of the restored panel before the existing replay loop, and
+the `self.save()` that already follows that loop persists the decisions. **The decision belongs to
+one dispatch, and only to it:** `reader_batch` assigns `job["invocation"]` on every dispatch, so a
+stored `None` never outlives the call it describes — the reviewer's next try starts from a real
+path. Recovery happens once per old state: afterwards the job is indistinguishable from one
+dispatched by the new code, and a second `resume` takes path 1.
+
+`reject_answer` and `note_rejected_answer` therefore read `job.get("invocation")` and act on the
+value, never re-derive it. A `None` produces the pointer-free entry the exhaustion guard already
+produces, and the `outcome.json` correction is skipped because no file has been identified as the
+one to correct. This is the deliberate trade: an unidentifiable call costs the owner a pointer,
+never a wrong pointer or a rewritten record of a different call. Idempotency keys on the stored
+path, and on `(reviewer, round, try)` for a pointer-free entry, so a replayed rejection appends
+exactly one summary either way.
+
+Nothing else about an old state changes. `tries` is neither read nor written by the recovery, so
+the protocol-retry budget an interrupted run had left is the budget it resumes with; the completed
+call in `raw_outcome` is collected exactly once and is never re-dispatched; and a job whose
+persisted answer is valid never reaches the rejection path at all. RUN-26 covers the recovery,
+including the refunded-quota sequence above; RUN-27 covers the refusal to guess.
+
 **Crash replay.** If the runner dies after the coordinator refused *J* and before the `save`, the
 panel step re-runs from the last saved jobs: the apply pass refuses *J* again, `note_rejected_answer`
 is idempotent by invocation path, the accepted jobs are re-applied once to a fresh copy of
@@ -324,13 +422,16 @@ reproduce the very failure G2 exists to fix, on the owner's visibility surface. 
 - **Every readable finding of every rejected answer is kept, and every rejected answer is kept.**
   There is no cap on either. Requirement 1 is a per-rejected-answer summary of the titles it
   contained; a cap would silently omit exactly the evidence the owner is being sent to read, and
-  there is nowhere to send them for the remainder — the existing `review-call` event carries
-  `task`, `status`, `round` and `error` only, with no titles and no invocation path. The volume is
+  there is nowhere to send them for the remainder. The existing `review-call` event carries
+  `task`, `status`, `round` and `error` only, and the `review-answer-rejected` event added above
+  carries the invocation path but no finding titles, so **neither is a destination for an omitted
+  summary and no message offers `events.jsonl` as one**: `state["tasks"][<producer>]
+  ["rejected_reviews"]` and the rendered section are the whole record. The volume is
   bounded by the protocol itself: at most three tries per reviewer per round, rounds bounded by
   `max_attempts`, so a seven-member panel over three attempts has a worst case of 63 entries. Each
   entry is a handful of short lines.
-- The entry is keyed by its `invocation` path: appending is idempotent, so a crash-replay of a
-  panel batch cannot double it.
+- The entry is keyed by its `invocation` path — or, when there is no pointer, by its reviewer,
+  round and try — so appending is idempotent and a crash-replay of a panel batch cannot double it.
 
 The producer's `STATUS.md` renders them. `record.render_task_status` gains the run name so it can
 print a usable command:
@@ -539,12 +640,17 @@ files (`STATUS.md`, `index.json`), to `verdict.json` (through the existing `writ
 | The runner is killed after a coordinator refusal and before its state write | The panel step re-runs from the last saved jobs and refuses the same answer again. `note_rejected_answer` is idempotent by `job["invocation"]`, so there is exactly one summary, and the accepted members are applied exactly once |
 | A reviewer sends the same malformed answer three times | Unchanged from today apart from visibility: the producer is `blocked`, now with `block_kind = "protocol"`, and the three rejected answers are summarised |
 | A reviewer answer is rejected and the run is resumed later | `job["raw_outcome"]` is replayed through `collect_reader`; the entry is keyed by its invocation path, so it is not appended twice, and the `outcome.json` rewrite is byte-identical |
+| A run saved by **today's** runner at `panel:outcomes-recorded` is resumed by the new one, and its persisted `raw_outcome` is an answer the ledger check refuses | `adopt_invocation` recovers `job["invocation"]` as the highest-numbered invocation directory under `job["directory"]`, corroborated against the persisted outcome, before the replay loop collects anything. The rejection then has its pointer, its summary and its `outcome.json` correction; `tries` is neither read nor written, so the remaining protocol retries are the ones the interrupted run had left, and the completed call is not made again |
+| The same upgrade for a job whose **earlier** invocation was refunded — `invocation-1` hit the provider's quota (`tries` back to 0), `invocation-2` returned the malformed answer and was checkpointed with `tries == 1` | The pointer is `invocation-2`, because selection is by directory order and never by `tries`. `invocation-1` is not named, not summarised and not rewritten: its `outcome.json` still records the quota failure, byte for byte |
+| The same upgrade, but the highest-numbered invocation holds no `outcome.json`, or one that does not equal the job's persisted `raw_outcome` | The pre-replay pass stores the refusal as `job["invocation"] = None` and nothing is rewritten. `collect_reader` then pops `raw_outcome`, but the refusal is a recorded decision, so `reject_answer`'s own `adopt_invocation` call returns that `None` instead of re-deciding on the weaker evidence that is left: the entry is pointer-free rather than wrong, and no `outcome.json` is rewritten anywhere. The owner still gets the verdict, the titles and the diagnostic from the job's own persisted answer |
+| The same upgrade, for a job that has no invocation directory at all (never dispatched) | `adopt_invocation` stores and returns `None`; the entry is the pointer-free one the exhaustion guard already produces, and the `outcome.json` correction is skipped. No `KeyError` is reachable, because every reader of the field uses `job.get("invocation")` |
 
 Crash points, all reconciled by the existing machinery:
 
 | Killed… | On `resume` |
 |---|---|
 | after a reader batch is recorded (`panel:outcomes-recorded`), before `collect_reader` ran | The jobs' `raw_outcome` is in the state; `collect_reader` runs from it and writes the summary then. Nothing is lost, nothing is duplicated |
+| at that same checkpoint, but by the runner **before** this change, and resumed by the runner after it | `adopt_invocation` runs over the restored jobs first and persists its decision — the recovered `invocation`, or `None` where the call could not be identified — with the step's existing `self.save()`. From there the replay is the row above. A second `resume` finds the field already present and changes nothing |
 | after `collect_reader` appended a summary, before `self.save()` | The summary is lost but the outcome is not: the batch is replayed from `raw_outcome` and the summary is written again |
 | after the coordinator emitted `review-repair`, before the state write that stores the repaired ledger | The apply loop re-runs from the unchanged `st["ledger"]`, so the ledger and the finding history are written exactly once. The event may appear twice in `events.jsonl`, which is an append-only log of attempts to act, and is how every replayed step already behaves |
 | between `set_aside` storing `block_kind` and the `STATUS.md` regeneration | `STATUS.md` is derived; `runner status --rebuild` regenerates it identically (RUN-08) |
@@ -578,13 +684,16 @@ in a scratch repository.
 | RUN-19 | the same run | the run's STATUS.md shows the task as `blocked (protocol)`, "Needs attention" says the reviewers could not answer in the required form and points at the task's STATUS.md, and "Next" prints `runner retry <run> <task> --apply-patch`. A producer blocked with findings open, and a state written before this change (no `block_kind`), render exactly as they do today | `run: a protocol block is not a substantive block` |
 | RUN-20 | a rejected answer's finding title holds a token-shaped string, control characters and 500 characters of text | the stored state and the rendered STATUS.md hold the redacted, single-line, truncated title, and `status --rebuild` regenerates the same bytes | `run: rejected answers are redacted and bounded` |
 | RUN-21 | an answer that the adapter accepted is then rejected by the ledger check | that invocation's `outcome.json` records the protocol error and its diagnostic, not `ok` | `run: the invocation records the outcome that was used` |
-| RUN-22 | a rejected answer is a JSON object with a readable `verdict` and two `findings` that are both valid, and `"resolutions": null` — so it fails `validate.REVIEW` on the sibling field **alone** | the answer is still rejected and retried, and its summary holds the claimed verdict and both titles. Nothing extracted reaches the ledger | `run: a malformed sibling field does not hide a readable finding` |
+| RUN-22 | a rejected answer is a JSON object whose `verdict`, `summary` and both `findings` entries are **all valid**, and whose only defect is `"resolutions": null` — so `validate.REVIEW` reports the single error `answer.resolutions must be a JSON array, not null`, on the sibling field **alone** | the answer is still rejected and retried, and its summary holds the claimed verdict, both titles and `"unreadable_findings": 0`. Nothing extracted reaches the ledger | `run: a malformed sibling field does not hide a readable finding` |
 | RUN-23 | one rejected answer holds eleven findings, and a seven-member panel produces twenty-one rejected answers in one run | every one of the eleven titles and all twenty-one entries are in the state and in the rendered STATUS.md, each with its invocation path; no line sends the reader elsewhere for a remainder | `run: no rejected answer or title is omitted` |
 | RUN-24 | one reviewer times out on its first call while another exhausts its protocol retries; and, separately, a panel where the only broken reviewer timed out | the first is `blocked (protocol, in part)`, naming each reviewer's own cause; the second has no `block_kind`, renders exactly as today, and is never described as having answered in the wrong form | `run: a timeout is not a malformed answer` |
-| RUN-25 | a rejected answer holds three `findings`: one valid, one a bare string, one an object with no `title`; a fourth carries `"severity": 7` | the summary holds the two readable titles — the valid one, and the one whose severity could not be read, recorded as `unknown` — and counts the remaining two as `"unreadable_findings": 2`, rendered as "2 further entries could not be read". Nothing is guessed at | `run: unreadable finding entries are counted, not guessed` |
+| RUN-25 | a rejected answer holds **four** `findings` entries: one wholly valid; one a bare string; one an object with no `title`; one an object with a string `title` and `"severity": 7`. This is the mixed-entry fixture: its `findings` entries are themselves malformed, so, unlike RUN-22, it does not fail on the sibling field alone | the summary holds **two** readable titles — the valid one, and the `severity: 7` one, recorded as `"severity": "unknown"` — and counts the other **two** as `"unreadable_findings": 2`, rendered as "2 further entries could not be read". Nothing is guessed at | `run: unreadable finding entries are counted, not guessed` |
+| RUN-26 | a run saved by the runner **before** this change is stopped at `panel:outcomes-recorded` and resumed by the runner after it. The round already holds `invocation-1`, a quota failure that refunded its try, and `invocation-2`, whose persisted `raw_outcome` is a malformed answer, checkpointed with `tries == 1` | the recovered `invocation` is exactly `…/round-1/invocation-2` — not `invocation-1`, which a tries-indexed rule would have named; the producer's STATUS.md holds one summary for that answer and points at `invocation-2`; `invocation-2/outcome.json` records the protocol error instead of `ok`; `invocation-1/outcome.json` is **byte-identical** to before the resume and is named nowhere; the ledger is byte-identical; `tries` is still 1, so the reviewer keeps the retries the interrupted run had left; and the completed call is not made again | `run: a panel checkpointed before this change is resumed with its answers` |
+| RUN-27 | the same upgrade, but the highest-numbered invocation's `outcome.json` is absent, or is present and does not equal the job's persisted `raw_outcome`. The run is driven through the **whole** sequence — the pre-replay pass, `collect_reader` (which pops `raw_outcome`), the rejection, and `reject_answer`'s own recovery call | the refusal is recorded once and holds: the summary is written with its verdict, its titles and its diagnostic and carries **no** invocation pointer; the second recovery call does not adopt the directory the first refused; every `outcome.json` in the round is byte-identical to before the resume, the present-but-mismatched one included; exactly one summary exists after a replay; and the reviewer's next try, if it has one, gets a real invocation path | `run: a refused recovery stays refused through the rejection` |
 
-Requirement coverage: R1 → RUN-18, RUN-20, RUN-22, RUN-23, RUN-25, and FND-28 for the rejections
-that only final application sees; R2 → FND-21, 22, 23, 24, 25, 27; R3 → RUN-19, RUN-24;
+Requirement coverage: R1 → RUN-18, RUN-20, RUN-22, RUN-23, RUN-25, RUN-26 and RUN-27 (a panel
+checkpointed before this change), and FND-28 for the rejections that only final application sees;
+R2 → FND-21, 22, 23, 24, 25, 27; R3 → RUN-19, RUN-24;
 R4 → FND-22 (atomicity), FND-26 (unchanged rework path), FND-27 and FND-29 (a refusal at final
 application, and its replay, leave the ledger untouched). RUN-21 covers the record correction found
 while designing.
@@ -598,7 +707,7 @@ task may write outside the files listed for it.
 |---|---|---|---|---|
 | T1 | The repair in the ledger: `apply_review` returns `(ledger, verdict, repair)`, with the five conditions and the unchanged diagnostic on every other path. Update its two callers in `panels.py` to unpack three values. Rewrite `test_a_new_finding_listed_as_a_resolution_is_rejected_with_the_required_ids` as two cases: the repaired one (FND-21) and an entry naming a real id, which keeps today's assertions on the diagnostic text (FND-22) | `src/taskrunner/findings.py`, `src/taskrunner/panels.py`, `tests/test_findings.py` | FND-21, 22, 23, 24, 26 | — |
 | T3 | `note_rejected_answer`: summarise every rejected review answer into `state["tasks"][<producer>]["rejected_reviews"]`, idempotent by invocation path. Extraction is per field and defensive — a readable `verdict` and readable finding titles are kept even when the answer as a whole fails `validate.REVIEW`, unreadable entries are counted, nothing is capped, everything is redacted; rewrite that invocation's `outcome.json` with the status that was used | `src/taskrunner/panels.py`, `tests/test_panels.py` | RUN-21, RUN-22, RUN-23, RUN-25 | — |
-| T3b | The shared rejection transition: `reader_batch` records `job["invocation"]`; `reject_answer` summarises, corrects `outcome.json`, keeps the diagnostic, chooses between another try and a final result carrying the real error, emits `review-answer-rejected` and saves; `collect_reader` is routed through it; the dispatch loop's exhaustion guard uses `job["protocol_error"]` when it has one | `src/taskrunner/panels.py`, `tests/test_panels.py` | FND-28 | T3 |
+| T3b | The shared rejection transition: `reader_batch` records `job["invocation"]`, and `adopt_invocation` decides that field **once** for a job restored from a state written before this change — before `panel`'s replay loop collects it — recording either the recovered path or `None`, and returning a decision that is already present rather than re-deriving it (every reader uses `job.get("invocation")` and acts on the value); `reject_answer` summarises, corrects `outcome.json`, keeps the diagnostic, chooses between another try and a final result carrying the real error, emits `review-answer-rejected` and saves; `collect_reader` is routed through it; the dispatch loop's exhaustion guard uses `job["protocol_error"]` when it has one | `src/taskrunner/panels.py`, `tests/test_panels.py` | FND-28, RUN-26, RUN-27 | T3 |
 | T1b | The coordinator's apply pass handles `ProtocolError` by discarding its local ledger and sending the job through `reject_answer`. **T1 is not correct without this** — eligibility is judged against a different ledger at the two call sites, so the exception is reachable | `src/taskrunner/panels.py`, `tests/test_panels.py` | FND-27, FND-29 | T1, T3b |
 | T2 | Record the repair: the `repair` history event on each finding raised, the `review-repair` event from the coordinator, the repair inside `job["result"]` so `close_panel` writes it into `verdict.json` | `src/taskrunner/findings.py`, `src/taskrunner/panels.py`, `tests/test_findings.py`, `tests/test_panels.py` | FND-25 (ledger, event, `verdict.json`) | T1 |
 | T4 | Render "Rejected review answers" and "Repaired review answers" in `render_task_status`, which gains `run_name` | `src/taskrunner/record.py`, `tests/test_panels.py` | RUN-18, RUN-20, FND-25 (STATUS line) | T2, T3 |
@@ -619,7 +728,7 @@ makes.
 
 | Document | Edit |
 |---|---|
-| `docs/06-scenarios.md` | Add FND-21 to FND-26 to "Findings and convergence" and RUN-18 to RUN-21 to "Runs and the record", in the tables' existing format. Mark them **(G2)** the way earlier rows are marked (A*n*)/(B*n*), and add a line to the file's preamble explaining that marking |
+| `docs/06-scenarios.md` | Add FND-21 to FND-29 to "Findings and convergence" and RUN-18 to RUN-27 to "Runs and the record", in the tables' existing format. Mark them **(G2)** the way earlier rows are marked (A*n*)/(B*n*), and add a line to the file's preamble explaining that marking |
 | `docs/02-concepts.md` | In "Findings", after the paragraph on the derived verdict: state the one repair the runner is allowed to make, its five conditions, that it can only deliver a block, and that eligibility is decided by the ledger the answer is finally applied to. In "Failure (D9)", extend the sentence "A panel whose members cannot produce a valid answer leaves its producer `blocked`, not `failed`" with: the record distinguishes a panel that could not answer in the required form from one that did not finish, per reviewer, and the rejected answers are summarised in the producer's `STATUS.md` |
 | `docs/04-run-directory.md` | In the layout block, annotate `verdict.json` with "plus `repair` when the runner dropped meaningless `resolutions` entries", and `outcome.json` with "the status that was used, including a rejection by the ledger check". Under "Rules of the record", note that a rejected answer is summarised into `state.json` (redacted at capture) and pointed at from the producer's `STATUS.md`, and that the raw text stays in `last-message.txt` |
 | `docs/05-architecture.md` | In "Review rounds (A7)", one sentence on the repair and its limit to answers that block, beside the existing sentence on the derived verdict; and one on where eligibility is decided, since reviewers are applied sequentially in workflow order. Beside the `AgentResult` status list, note that a blocked producer's `block_kind` distinguishes a panel that failed at the protocol level from one that timed out or errored |

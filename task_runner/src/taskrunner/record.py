@@ -69,6 +69,7 @@ def _fsync_dir(path):
 def write_durable(path, data, crash=_no_crash):
     """Temporary file, flush, sync, rename, sync the directory. A crash leaves the old file intact;
     a leftover temporary file is ignored and overwritten next time."""
+    path = os.fspath(path)
     tmp = path + ".tmp"
     with open(tmp, "wb") as fh:
         fh.write(data)
@@ -538,6 +539,7 @@ class Run:
         self.write_decision(os.path.join(tdir, "commit.json"),
                             {"sha": commit, "files": files, "message": message})
         self.state["tasks"][task_id].update(status="accepted", commit=commit, reason="")
+        self.state["last_tip"] = commit
         if self.state.get("active_producer") == task_id:
             self.state["active_producer"] = None
 
@@ -790,7 +792,15 @@ def _reconcile_branch(run, git, it, **_):
     return f"{it['op']} run branch {name}: checked out"
 
 
-_RECONCILERS = {"branch": _reconcile_branch,
+def _reconcile_replan(run, git, it, crash, **_):
+    from . import replan
+    try:
+        return replan.apply(run, git, it, crash)
+    except replan.Refused as exc:
+        raise ReconcileError(str(exc)) from exc
+
+
+_RECONCILERS = {"replan": _reconcile_replan, "branch": _reconcile_branch,
                 "commit": _reconcile_commit, "restore": _reconcile_restore, "pin": _reconcile_pin,
                 "patch": _reconcile_patch, "close": _reconcile_close, "revert": _reconcile_revert,
                 "agent": _reconcile_agent, "command": _reconcile_command}

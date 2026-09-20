@@ -8,14 +8,10 @@ import signal
 from types import SimpleNamespace
 import uuid
 
-from . import __version__, engine, gitops, record, workflow, qualification, preflight, agents
+from . import __version__, engine, gitops, record, workflow, qualification, preflight, agents, replan
 
 EXIT_OK, EXIT_FAILED, EXIT_HUMAN = 0, 2, 255
 
-# Commands of 05 that later stages build: name -> (stage, help)
-LATER = {
-    "replan": (6, "bring an edited workflow into the run, where safe"),
-}
 
 
 def main(argv=None):
@@ -27,7 +23,7 @@ def main(argv=None):
         return _main(argv)
     except KeyboardInterrupt:
         return fail("interrupted; child processes stopped. Continue with runner resume")
-    except (record.RecordError, gitops.GitError, agents.InvocationError) as exc:
+    except (record.RecordError, gitops.GitError, gitops.RevertConflict, agents.InvocationError) as exc:
         return fail(str(exc))
     finally:
         signal.signal(signal.SIGTERM, previous)
@@ -113,21 +109,18 @@ def _main(argv=None):
     p.add_argument("-C", dest="where", default=".", metavar="DIR")
     p.set_defaults(func=cmd_retry)
 
-    for name, (stage, text) in LATER.items():
-        p = sub.add_parser(name, help=f"{text} (stage {stage}, not implemented yet)")
-        p.add_argument("rest", nargs=argparse.REMAINDER)
-        p.set_defaults(func=cmd_later, stage=stage)
+    p = sub.add_parser("replan", help="install an edited workflow; reopen accepted work with revert commits")
+    p.add_argument("run", nargs="?", default="latest")
+    p.add_argument("--reopen", action="append", default=[], metavar="TASK")
+    p.add_argument("--workflow", metavar="FILE", help="revised workflow (default: the original source)")
+    p.add_argument("-C", dest="where", default=".", metavar="DIR")
+    p.set_defaults(func=cmd_replan)
 
     args = parser.parse_args(argv)
     if not args.command:
         parser.print_help(sys.stderr)
         return EXIT_FAILED
     return args.func(args)
-
-
-def cmd_later(args):
-    print(f"runner {args.command}: not implemented yet (stage {args.stage})", file=sys.stderr)
-    return EXIT_FAILED
 
 
 def report_problems(wf, out):
@@ -495,4 +488,23 @@ def cmd_resolve(args):
         except engine.Refused as exc:
             return fail(str(exc))
     print(f"{args.finding}: {args.decision}. Continue with: runner resume {run.name}")
+    return EXIT_OK
+
+
+def cmd_replan(args):
+    try:
+        run, git, lock = _open_run(args)
+    except (record.RecordError, gitops.GitError) as exc:
+        return fail(str(exc))
+    with lock:
+        source = args.workflow or run.state.get("workflow_file") or run.info["workflow_file"]
+        try:
+            directory, plan = replan.prepare(run, git, source, args.reopen)
+            print("replan changes: " + (", ".join(plan["changes"]) or "none"))
+            print("affected tasks: " + (", ".join(plan["affected"]) or "none"))
+            print("revert commits: " + (", ".join(c[:7] for c in plan["commits"]) or "none"))
+            print(replan.execute(run, git, directory, CRASH or record._no_crash))
+        except (replan.Refused, gitops.GitError, gitops.RevertConflict) as exc:
+            return fail(str(exc))
+    print(f"Continue with: runner resume {run.name}")
     return EXIT_OK

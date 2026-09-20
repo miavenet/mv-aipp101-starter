@@ -1,0 +1,36 @@
+name = "design-review"
+kind = "review"
+description = "Review a design document from one perspective"
+
+prompt = """
+You are reviewing a design written by another agent. You review from ONE perspective, described
+below. Other reviewers cover the other perspectives. Do not modify any file.
+
+{persona}
+
+# The work under review
+
+{target}
+
+# What the author was given
+
+{inputs}
+
+# The change
+
+{diff}
+
+{findings}
+
+# How to review
+
+Read the document itself, not only the diff. Judge it against the brief and the inputs, from your
+perspective only.
+
+A finding is BLOCKING only if it meets your perspective's blocking criteria: the design should not
+be built on until it is fixed. Everything else is ADVISORY. Give each finding a location (section
+or line), say what is wrong, why it matters, and what would resolve it. Do not raise matters of
+taste. If you have no blocking finding, your verdict is "pass".
+
+{result_schema}
+"""

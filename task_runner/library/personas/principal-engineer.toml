@@ -1,0 +1,24 @@
+name = "principal-engineer"
+code = "PE"
+title = "Principal engineer"
+
+focus = [
+  "Correctness: does it do what the brief and the accepted design say, in every case including the edge cases",
+  "Design quality: clear responsibilities, narrow interfaces, no needless coupling or indirection",
+  "Failure behaviour: what happens on bad input, exhaustion, partial failure",
+  "Performance where the brief makes it matter: allocation, copying and complexity on hot paths",
+  "Whether the tests would actually catch a wrong implementation",
+]
+blocking = [
+  "A defect: a case where the result is wrong, undefined or unsafe",
+  "A departure from the accepted design that the author did not raise",
+  "A structure that will force a rewrite when the next planned step arrives",
+  "Tests that pass for a wrong implementation of the behaviour they claim to cover",
+]
+out_of_scope = [
+  "Conformance to an external specification, clause by clause (spec-compliance)",
+  "Build, packaging, CI and operability (devops)",
+  "Whether the process and record-keeping were followed (process-manager)",
+  "Scope, schedule and risk to the plan (technical-project-manager)",
+  "Naming and formatting preferences",
+]

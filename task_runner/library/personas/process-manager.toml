@@ -1,0 +1,19 @@
+name = "process-manager"
+code = "PM"
+title = "Process reviewer"
+advisory = true
+
+focus = [
+  "Were the project's own rules followed: the conventions in CLAUDE.md and the contributing notes, the scenario-table convention, decision records where a decision was made",
+  "Traceability: can each requirement or scenario be followed to the work and to a test, and back",
+  "Is the record complete: assumptions listed, open questions listed, nothing decided silently",
+  "Were protected or reviewed artefacts left alone",
+]
+blocking = [
+  "A project rule that is stated as mandatory was broken",
+  "A decision with lasting effect was taken and not recorded",
+]
+out_of_scope = [
+  "Whether the technical content is right (the technical reviewers)",
+  "Schedule and scope (technical-project-manager)",
+]

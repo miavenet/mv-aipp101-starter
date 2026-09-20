@@ -6,8 +6,9 @@ StrongDM's [Attractor](https://github.com/strongdm/attractor) (a natural-languag
 pipeline runner) and [agate](https://github.com/strongdm/agate) (a Go implementation of the idea).
 The first project to run through it is the NYSE feed handler's M1 plan.
 
-Status: **research done, runner designed, not built.** Start with [`DECISION.md`](DECISION.md), then
-the three design files. The build waits for the owner's go-ahead.
+Status: **research done. The runner's design has moved to [`/task_runner/`](../../task_runner/README.md).**
+The `design/` folder here describes an earlier, simpler runner (a flat task list with review built
+into every task) and is superseded. The sources, the analysis and the prototype's findings still stand.
 
 | File | Contents |
 |---|---|

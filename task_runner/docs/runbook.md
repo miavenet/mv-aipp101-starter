@@ -1,10 +1,9 @@
 # Runbook
 
-Status: **partly verified at stage 3**. The [captured CLI walkthrough](stage-3-walkthrough.md)
-exercises start, rejection, rework, approval, resume and status with the model-free
-[command example](../examples/command-demo.toml). Recovery, retry, branch safety and process cleanup
-are also covered by the automated suite. Procedures involving `doctor`, review panels, budgets,
-`resolve` or `replan` remain design and need their later stages; those commands are not available yet.
+Status: **partly verified at stage 4**. The [stage 4 CLI walkthrough](stage-4-walkthrough.md)
+exercises doctor, caching, gate preflight, start, rejection, rework, approval and resume with a
+model-free command agent. Recovery, retry, branch safety and process cleanup are covered by the
+runner tests. Panels, monetary budget reservation, `resolve` and `replan` remain later-stage work.
 
 For the ideas behind these procedures, read the [tutorial](tutorial/README.md).
 
@@ -27,14 +26,14 @@ flowchart TB
     F1 -- "reconciliation error" --> RECON["someone changed the branch or tree while paused.<br/>Put it back as the message says, then resume"]
 ```
 
-## 1. Before the first run — to verify at stages 1 and 4
+## 1. Before the first run — verified at stage 4
 
 1. `runner validate WORKFLOW`. Fix every error. Read the warnings and the expanded DAG; check that
    each claim of a frozen file is intended.
 2. `runner graph WORKFLOW -o wf.dot` if you want to look at the shape.
 3. `runner doctor WORKFLOW`. Qualifies each agent profile per capability. It costs a little money
    and is cached.
-4. `runner check-gates WORKFLOW`. Every `new` gate should report **fail**, for the intended reason.
+4. `runner check-gates WORKFLOW` uses disposable copies of the clean repository. Every `new` gate should report **fail**, for the intended reason.
    A `new` gate that passes cannot show the task was done. A gate that leaves files behind must be
    fixed, or its products ignored by git.
 5. Make sure the work tree is clean. There is no option to start dirty.

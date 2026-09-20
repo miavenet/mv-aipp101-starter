@@ -180,3 +180,51 @@ def rework_prompt(task, *, feedback, caps):
     return (feedback_text(feedback, caps["findings_cap_bytes"])
             + "\n\nFix the work in place. The same rules and the same paths apply.\n\n"
             + result_schema_text("produce"))
+
+
+class EvidenceTooLarge(Exception):
+    pass
+
+
+def provided_context(git, base, candidate, paths, cap_bytes):
+    """Complete text-only evidence, read from immutable git objects. Never silently truncated.
+
+    Include both versions of every requested path and the complete binary-capable diff. Binary
+    blobs are base64 encoded. The caller chooses the input/output paths needed by the review.
+    """
+    import base64
+    import hashlib
+    old, new = git.ls_tree(base), git.ls_tree(candidate)
+    manifest = {'mode': 'text-only', 'base': base, 'candidate': candidate, 'files': []}
+    blocks = []
+    for path in sorted(set(paths)):
+        item = {'path': path, 'versions': {}}
+        for label, entries in (('base', old), ('candidate', new)):
+            if path not in entries:
+                item['versions'][label] = None
+                continue
+            mode, object_id = entries[path]
+            if mode == '160000':
+                raise ValueError('text-only evidence cannot include a submodule')
+            data = git.run('cat-file', 'blob', object_id).stdout
+            try:
+                content = data.decode('utf-8')
+                encoding = 'utf-8'
+                if '\0' in content:
+                    raise UnicodeError
+            except UnicodeError:
+                content = base64.b64encode(data).decode('ascii')
+                encoding = 'base64'
+            item['versions'][label] = {'object': object_id, 'mode': mode, 'bytes': len(data),
+                                       'sha256': hashlib.sha256(data).hexdigest(), 'encoding': encoding}
+            blocks.append(fence('evidence', json.dumps({'path': path, 'version': label,
+                                                      'encoding': encoding, 'content': content})))
+        manifest['files'].append(item)
+    diff = git.full_patch(base, candidate).decode('utf-8', errors='replace')
+    blocks.append(fence('complete diff', diff))
+    text = '\n\n'.join(blocks)
+    if _size(text) > cap_bytes:
+        raise EvidenceTooLarge(f'text-only evidence needs {_size(text)} bytes; limit is {cap_bytes}; nothing was sent')
+    manifest['evidence_sha256'] = hashlib.sha256(text.encode()).hexdigest()
+    manifest['evidence_bytes'] = _size(text)
+    return text, manifest

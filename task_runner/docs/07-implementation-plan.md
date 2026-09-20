@@ -1,7 +1,7 @@
 # 07 — Implementation plan
 
 Status: **the owner gave the go-ahead on 2026-09-19, after the adversarial review was answered
-(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is done: 116 tests pass in all, covering GIT-01 to GIT-16, REC-01 to REC-13 and RUN-01, 02, 07, 08, 11, 16, 17, several at primitive level until the engine exists. `start` creates a run and stops in stage 2. Stage 3 is now done: 196 tests pass; `command` agents, producer transactions, gates/checks, human decisions, resume and retry work end to end. Stage 4 is next.** Progress is recorded in the
+(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is done: 116 tests pass in all, covering GIT-01 to GIT-16, REC-01 to REC-13 and RUN-01, 02, 07, 08, 11, 16, 17, several at primitive level until the engine exists. `start` creates a run and stops in stage 2. Stage 3 is now done: 196 tests pass; `command` agents, producer transactions, gates/checks, human decisions, resume and retry work end to end. Stage 4 is now done: 227 runner tests pass; headless adapters, observed capability qualification, caching and gate preflight are implemented. Stage 5 is next.** Progress is recorded in the
 [task_runner README](../README.md).
 
 ## Approach
@@ -71,6 +71,18 @@ opening the producer transaction. The full suite passes 196 tests with no model 
 `start`, reject, `resume`, approve, `resume`, and a clean tree with exactly one accepted commit.
 Review-specific portions of ACC-03, ACC-22, FRZ-06 and FRZ-09 remain for stage 5; stage 3 tests the
 gate/prompt mechanisms and human-only stale acceptance without claiming panel execution.
+
+### Stage 4 completion (2026-09-20)
+
+The Claude Code and Codex adapters use recorded fixtures and installed CLI help. The suite covers
+AGENT-01 to AGENT-14 and PRE-01 to PRE-08 without model calls, including terminal-event enforcement,
+malformed answers, early sandbox failures, streamed logs, process-group shutdown, false capability
+claims, caching/invalidation and destructive gate preflight in disposable copies. PRE-06 is tested
+through the explicit text-only single-review helper; panel scheduling remains stage 5.
+
+[The stage 4 walkthrough](stage-4-walkthrough.md) records doctor, a cached doctor, check-gates and
+qualified producer execution. [Compatibility notes](stage-4-compatibility.md) identify the CLI
+versions checked, what was observed on this host, and what still needs live qualification.
 
 ### The scripted agent's contract (stage 3 onward)
 

@@ -3,22 +3,37 @@
 import argparse
 import os
 import sys
+import signal
+from types import SimpleNamespace
 import uuid
 
-from . import __version__, engine, gitops, record, workflow
+from . import __version__, engine, gitops, record, workflow, qualification, preflight, agents
 
 EXIT_OK, EXIT_FAILED, EXIT_HUMAN = 0, 2, 255
 
 # Commands of 05 that later stages build: name -> (stage, help)
 LATER = {
-    "doctor": (4, "qualify each agent, model and profile per capability"),
-    "check-gates": (4, "run every gate and check on the untouched tree"),
     "resolve": (5, "a person settles an escalated finding"),
     "replan": (6, "bring an edited workflow into the run, where safe"),
 }
 
 
 def main(argv=None):
+    previous = signal.getsignal(signal.SIGTERM)
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, interrupted)
+    try:
+        return _main(argv)
+    except KeyboardInterrupt:
+        return fail("interrupted; child processes stopped. Continue with runner resume")
+    except (record.RecordError, gitops.GitError, agents.InvocationError) as exc:
+        return fail(str(exc))
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _main(argv=None):
     parser = argparse.ArgumentParser(prog="runner", description="Run a workflow of tasks to "
                                      "completion with headless coding agents.")
     parser.add_argument("--version", action="version", version=f"runner {__version__}")
@@ -33,6 +48,15 @@ def main(argv=None):
     p.add_argument("workflow")
     p.add_argument("-o", "--output", metavar="FILE")
     p.set_defaults(func=cmd_graph)
+
+    p = sub.add_parser("doctor", help="qualify the workflow's agent profiles in scratch repositories")
+    p.add_argument("workflow")
+    p.add_argument("--force", action="store_true")
+    p.set_defaults(func=cmd_doctor)
+
+    p = sub.add_parser("check-gates", help="test every gate/check on disposable copies of the untouched tree")
+    p.add_argument("workflow")
+    p.set_defaults(func=cmd_check_gates)
 
     p = sub.add_parser("start", help="create a run and execute it")
     p.add_argument("workflow")
@@ -202,9 +226,42 @@ def fail(message):
 
 
 def check_capabilities(wf):
-    """HOOK (stage 4): refuse a workflow whose agent profiles are not qualified for what its types
-    require, from the cached qualification. `doctor` does not exist yet, so nothing is checked."""
-    return []
+    wf.qualification_report = qualification.check_workflow(wf)
+    return wf.qualification_report["problems"]
+
+
+def cmd_doctor(args):
+    wf = workflow.load(args.workflow)
+    report_problems(wf, sys.stderr)
+    if wf.errors:
+        return EXIT_FAILED
+    report = qualification.check_workflow(wf, force=args.force)
+    for entry in report["profiles"].values():
+        meta = entry["metadata"]
+        mode = "read-only" if meta["read_only"] else "writer"
+        print(f"{meta['profile']['kind']} {meta['model'] or '(default model)'} {mode}: "
+              + (", ".join(entry["capabilities"]) or "no capabilities qualified")
+              + (" (cached)" if entry["cached"] else ""))
+        if entry["orphan_detection"].startswith("weaker"):
+            print("warning: orphan detection is weaker on this host")
+    print("qualification: " + os.path.join(record.runs_dir_for(gitops.Git(wf.root).top), "qualification.json"))
+    for problem in report["problems"]:
+        print(problem, file=sys.stderr)
+    return EXIT_FAILED if report["problems"] else EXIT_OK
+
+
+def cmd_check_gates(args):
+    wf = workflow.load(args.workflow)
+    report_problems(wf, sys.stderr)
+    if wf.errors:
+        return EXIT_FAILED
+    report = preflight.check_gates(wf)
+    for result in report["results"]:
+        text = "fails as intended" if result["result"] == "fail" and result["fails_as_intended"] else result["result"]
+        print(f"{result['id']}: {text}" +
+              ("; changed paths: " + ", ".join(result["changed_paths"]) if result["changed_paths"] else ""))
+    print("record: " + report["directory"])
+    return EXIT_OK if report["ok"] else EXIT_FAILED
 
 
 # Tests replace this to stop the runner at a named point, as a kill would.
@@ -225,6 +282,8 @@ def cmd_start(args):
     report_problems(wf, sys.stderr)
     if wf.errors:
         return EXIT_FAILED
+    if any(task["kind"] == "review" for task in wf.tasks):
+        return fail("reviews arrive in stage 5; no qualification probes or tasks were run")
     git = gitops.Git(wf.root)
     original = git.current_branch()
     current_mode = wf.defaults["branch"] == "current"
@@ -251,6 +310,7 @@ def cmd_start(args):
     with lock:
         branch = original if current_mode else f"run/{wf.name}-{run_id[:8]}"
         run = record.Run.create(wf, git, branch, original, run_id=run_id)
+        qualification.attach_run(run, wf.qualification_report)
         if not current_mode:
             op = run.begin("branch", name=branch)
             git.create_and_checkout_run_branch(branch)
@@ -364,6 +424,15 @@ def cmd_resume(args):
                         "was, then `runner resume`")
         except gitops.RestoreError as exc:
             return fail(f"environment failure: {exc}")
+        if any(st["kind"] in ("produce", "review") for st in run.state["tasks"].values()):
+            frozen = record.read_json(os.path.join(run.path, "workflow.expanded.json"))
+            wf = SimpleNamespace(root=frozen["paths"]["root"], tasks=frozen["tasks"], agents=frozen["agents"])
+            report = qualification.check_workflow(wf, locked=True)
+            if report["problems"]:
+                return fail("\n".join(report["problems"]))
+            qualification.attach_run(run, report)
+            run.state.pop("needs_qualification", None)
+            run.save()
         return execute(run, git)
 
 

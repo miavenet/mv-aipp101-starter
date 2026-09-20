@@ -450,3 +450,12 @@ producer starts so they cannot require another writer while it holds the tree.
 Only the `command` adapter executes at this stage. Review workflows and unavailable adapters stop
 before agent execution. Qualification, panel scheduling and monetary budget enforcement retain
 the stage boundaries in the implementation plan. See the [walkthrough](stage-3-walkthrough.md).
+
+### Stage 4 implementation notes
+
+`qualification.py` owns capability probes and their cache; `preflight.py` runs gates in disposable
+local clones. `agents.py` now implements Claude Code, Codex and command adapters, plus the explicit
+text-only single-review helper. `proc.py` feeds redacted lines to the incremental Codex reducer.
+CLI shutdown catches SIGTERM, stops the active child group and leaves durable intents for resume.
+Known CLI versions and qualification limitations are in [stage-4-compatibility.md](stage-4-compatibility.md).
+Panels and monetary reservation remain stage 5.

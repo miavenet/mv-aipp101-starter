@@ -5,28 +5,35 @@ it to completion with headless coding agents, and leaves a complete, navigable r
 that was done. Tasks can be of any type: design, implementation, tests, code review, design review,
 summaries, plain commands, human sign-off. The output of one stage feeds the next stage or stages.
 
-Status: **stages 1–3 implemented; 196 tests pass.** `start` and `resume` execute one producer
-transaction at a time using a `command` agent, with gates, verifying checks and human decisions.
-`approve`, `reject` and `retry` are implemented, together with durable recovery and streamed,
-redacted logs. Every accepted commit is tied to the verified candidate.
+Status: **stages 1–4 implemented; 227 runner tests pass.** `start` and `resume` execute one producer
+transaction at a time using command, Claude Code or Codex agents, verified by gates, checks and
+human decisions. `doctor` qualifies each profile using observed effects and caches the results;
+`start` and `resume` enforce qualification. `check-gates` tests commands on disposable copies.
+Accepted commits contain exactly the verified candidate.
 
-Run the tests from the repository root:
+Run the model-free tests from the repository root:
 
 ```sh
 python3 -m unittest discover -s task_runner/tests -q
 ```
 
 The runner needs Python 3.11+ and Git; no installation or third-party Python packages are required.
-Run `task_runner/runner --help` for the available commands. For a model-free example, copy
-[`examples/command-demo.toml`](examples/command-demo.toml) into a clean scratch Git repository,
-commit it, and run `runner start` on that copy. The
-[stage 3 walkthrough](docs/stage-3-walkthrough.md) records a real rejection, rework, approval and
-resume through the CLI.
+Run `task_runner/runner --help` for the available commands. For a model-free example, copy both
+[`examples/command-demo.toml`](examples/command-demo.toml) and
+[`examples/command_agent.py`](examples/command_agent.py) into a clean scratch Git repository,
+commit them, then run `runner doctor command-demo.toml` and `runner start command-demo.toml`.
+The [stage 4 walkthrough](docs/stage-4-walkthrough.md) contains captured CLI output.
 
-Claude Code and Codex adapters and `doctor` arrive in stage 4. Review panels, findings and budget
-reservation arrive in stage 5; replan arrives in stage 6. Workflows requiring review tasks or
-unavailable adapters stop with an explanation before any agent is called. The larger book-module
-example can be validated and graphed, but cannot execute until those later stages are implemented.
+Real-agent `doctor` probes can incur model costs. Qualification records report known spend and
+unpriced calls separately; Codex has no dollar cap. The adapters were tested against recorded
+output and installed CLI help, without a live model call. The known Codex namespace startup
+failure is correctly classified as an environment failure, not successful or blocked task work.
+See [stage 4 compatibility and limits](docs/stage-4-compatibility.md).
+
+Review panels, findings and budget reservation arrive in stage 5; replan arrives in stage 6.
+The text-only evidence and single-review invocation helpers are implemented, but workflows with
+review tasks still stop before panel execution. The book-module example can be validated and
+graphed; full execution needs those later stages.
 
 ## Read in this order
 

@@ -91,8 +91,8 @@ class CommandAdapter(unittest.TestCase):
         self.assertIsInstance(agents.make("x", {"kind": "command", "argv": ["true"]}),
                               agents.CommandAgent)
         with self.assertRaises(agents.UnknownAgent) as caught:
-            agents.make("claude", {"kind": "claude"})
-        self.assertIn("stage 4", str(caught.exception))
+            agents.make("unknown", {"kind": "unknown"})
+        self.assertIn("unknown", str(caught.exception))
         self.assertNotIn("resume", agents.CommandAgent("x", {"argv": []}).capabilities())
 
     def test_read_only_args(self):

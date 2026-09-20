@@ -762,18 +762,12 @@ gate = ["true"]
         self.check_invariants()
 
     def test_environment_failures_use_no_attempts(self):
-        """fail: environment failures use no attempts (FAIL-06)"""
+        """FAIL-06: a missing binary is rejected before any producer attempt or run exists."""
         self.workflow(ONE.replace('type = "implement"', 'type = "implement"\nagent = "ghost"')
                       + '[agents.ghost]\nargv = ["/nonexistent/agent-binary"]\n')
         self.assertEqual(self.start(), 2)
-        run = self.the_run()
-        self.assertIn("environment failure", run.state["stop_reason"])
-        self.assertIn("/nonexistent/agent-binary", run.state["stop_reason"])
-        self.assertEqual(run.state["tasks"]["make"]["attempts_used"], 0)
-        outcome = self.read_json("make", "attempt-1", "invocation-1", "outcome.json")
-        self.assertEqual(outcome["status"], "environment")
-        with open(os.path.join(run.path, "STATUS.md")) as fh:
-            self.assertIn("environment failure", fh.read())
+        self.assertIn("/nonexistent/agent-binary", self.output)
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".runs", "demo")))
 
     def test_recovery_artifacts_are_complete_and_pinned(self):
         """fail: recovery artifacts are complete and pinned (FAIL-07)"""
@@ -922,13 +916,6 @@ gate = ["false"]
         self.assertEqual(self.resume(), 2)
         self.assertIn("is checked out", self.output)
 
-    def test_unknown_adapters_stop_without_an_attempt(self):
-        self.workflow(ONE.replace('type = "implement"', 'type = "implement"\nagent = "codex"'))
-        self.assertEqual(self.start(), 2, self.output)
-        self.assertIn("stage 4", self.output)
-        self.assertEqual(self.calls(), 0)
-        self.assertEqual(self.status("make"), "pending")
-
     def test_interrupted_standalone_check_restores_before_retry(self):
         self.workflow('[[task]]\nid = "check"\ntype = "check"\nrestores = true\n'
                       'run = ["echo changed > README.md"]\n' + ONE)
@@ -954,7 +941,8 @@ gate = ["false"]
         self.assertEqual(self.start(), 2)
         self.assertIn("reviews arrive in stage 5", self.output)
         self.assertEqual(self.calls(), 0)
-        self.assertEqual(self.status("make"), "pending")
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".runs")))
+
 
 
 if __name__ == "__main__":

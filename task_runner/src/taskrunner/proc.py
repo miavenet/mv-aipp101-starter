@@ -40,7 +40,8 @@ def redact(data):
 class _Sink:
     """Redacts whole lines, writes them to the log at once, keeps a bounded tail."""
 
-    def __init__(self, path):
+    def __init__(self, path, observer=None):
+        self.observer = observer
         self.fh = open(path, "ab")
         self.pending = b""
         self.tail = b""
@@ -73,6 +74,8 @@ class _Sink:
         self.fh.flush()
         self.total += len(data)
         self.tail = (self.tail + data)[-TAIL_BYTES:]
+        if self.observer:
+            self.observer(data)
 
     def close(self):
         if self.pending:
@@ -90,7 +93,7 @@ class ProcResult:
 
 
 def run_process(argv, *, cwd, env, stdin_data=b"", stdout_path, stderr_path=None,
-                timeout_s=None, on_start=None, grace_s=GRACE_S):
+                timeout_s=None, on_start=None, grace_s=GRACE_S, on_stdout=None):
     """Run `argv` to the end or to the deadline. `stderr_path=None` sends both streams to one log.
     `on_start(identity)` is called once the child exists, so the caller can record who it is."""
     started = time.monotonic()
@@ -112,7 +115,7 @@ def run_process(argv, *, cwd, env, stdin_data=b"", stdout_path, stderr_path=None
                 pipe.close()
         raise
 
-    out, err = _Sink(stdout_path), (_Sink(stderr_path) if stderr_path else None)
+    out, err = _Sink(stdout_path, on_stdout), (_Sink(stderr_path) if stderr_path else None)
     sel = selectors.DefaultSelector()
     os.set_blocking(proc.stdout.fileno(), False)
     sel.register(proc.stdout, selectors.EVENT_READ, out)
@@ -128,6 +131,7 @@ def run_process(argv, *, cwd, env, stdin_data=b"", stdout_path, stderr_path=None
 
     deadline = started + timeout_s if timeout_s else None
     timed_out = False
+    interrupted = False
     try:
         exited_at = None
         while any(k.data is not None for k in sel.get_map().values()):
@@ -170,9 +174,12 @@ def run_process(argv, *, cwd, env, stdin_data=b"", stdout_path, stderr_path=None
                 proc.wait(timeout=left)
             except subprocess.TimeoutExpired:
                 timed_out = True
+    except BaseException:
+        interrupted = True
+        raise
     finally:
         # Whatever happened, nothing of the group outlives the call.
-        stop_group(proc, identity, grace_s, polite=timed_out)
+        stop_group(proc, identity, grace_s, polite=timed_out or interrupted)
         for key in list(sel.get_map().values()):
             if key.data is not None:
                 try:

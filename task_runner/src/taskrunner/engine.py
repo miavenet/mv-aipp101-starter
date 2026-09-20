@@ -14,7 +14,7 @@ import os
 import sys
 import tomllib
 
-from . import agents, checks, gitops, patterns, prompts, record, validate
+from . import agents, checks, gitops, patterns, prompts, record, validate, qualification
 
 EXIT_OK, EXIT_FAILED, EXIT_HUMAN = 0, 2, 255
 PROTOCOL_RETRIES = 2
@@ -353,7 +353,7 @@ class Engine:
         rel_adir = os.path.relpath(adir, self.run.path)
         feedback = st.get("feedback")
         agent = agents.make(task["agent"], self.wf["agents"][task["agent"]])
-        continuing = bool(feedback and st.get("session_id") and "resume" in agent.capabilities())
+        continuing = bool(feedback and st.get("session_id") and "resume" in st.get("qualified", []))
         caps = {k: self.defaults[k] for k in ("diff_cap_bytes", "inputs_cap_bytes",
                                               "findings_cap_bytes")}
         try:
@@ -396,6 +396,7 @@ class Engine:
             return self.end(task, "failed", "the run record was changed during the agent's call: "
                             + "; ".join(problems))
         if result.status == agents.ENVIRONMENT:
+            qualification.invalidate(self.run, tid)
             raise EngineStop(f"environment failure in task '{tid}': {result.error}. No attempt "
                              "was used. Fix the cause, then `runner resume`")
 

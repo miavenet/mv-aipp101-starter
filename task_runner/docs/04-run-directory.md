@@ -265,3 +265,15 @@ Spend: $3.12 known of $50.00, $0.00 reserved, plus 2 unpriced Codex calls (48k t
   }
 }
 ```
+
+## Stage 4 qualification and preflight records
+
+At repository level, `.runs/qualification-cache.json` holds fingerprinted entries and
+`.runs/qualification.json` holds the latest report. `.runs/doctor/<uuid>/<fingerprint>/invocation-N/`
+keeps each probe prompt, command, streamed output and outcome. `.runs/check-gates/<uuid>/` keeps
+command logs and `results.json`. These are operational records, not workflow runs.
+
+Each workflow run has `qualification.json`, with the observed capabilities and their provenance;
+`run.json.agents` records version, profile, model, host and configuration hashes. Task state records
+the qualification key and capabilities used. Explicit text-only review calls record `evidence.json`
+and `review-mode.json` alongside their invocation logs.

@@ -18,6 +18,10 @@ import time
 
 
 def main():
+    prompt = sys.stdin.read()
+    from probe_agent import handle_probe
+    if handle_probe(prompt):
+        return 0
     script = os.environ["FAKE_AGENT_SCRIPT"]
     with open(script, encoding="utf-8") as fh:
         steps = json.load(fh)
@@ -29,7 +33,6 @@ def main():
         n = 0
     with open(counter, "w", encoding="utf-8") as fh:
         fh.write(str(n + 1))
-    prompt = sys.stdin.read()
     os.makedirs(script + ".prompts", exist_ok=True)
     with open(os.path.join(script + ".prompts", f"{n + 1}.md"), "w", encoding="utf-8") as fh:
         fh.write(prompt)

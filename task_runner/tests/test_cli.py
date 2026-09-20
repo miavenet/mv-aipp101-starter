@@ -97,7 +97,7 @@ class Cli(RepoCase):
             self.assertIn("digraph", fh.read())
 
     def test_later_commands_say_so(self):
-        for cmd, stage in (("doctor", 4), ("check-gates", 4), ("resolve", 5), ("replan", 6)):
+        for cmd, stage in (("resolve", 5), ("replan", 6)):
             res = run_cli(cmd, "whatever")
             self.assertEqual(res.returncode, 2)
             self.assertIn(f"not implemented yet (stage {stage})", res.stderr)
@@ -118,15 +118,16 @@ def gitout(cwd, *args):
 
 
 class Runs(RepoCase):
+    RUN_WORKFLOW = 'name = "demo"\n[[task]]\nid = "design"\ntype = "human"\n'
     def setUp(self):
         super().setUp()
-        self.wf = self.write("wf.toml", WORKFLOW)
+        self.wf = self.write("wf.toml", self.RUN_WORKFLOW)
         self.commit()
 
     def start(self):
         res = run_cli("start", self.wf)
-        self.assertEqual(res.returncode, 2, res.stderr)          # this fixture requires panels
-        self.assertIn("reviews arrive in stage 5", res.stderr)
+        self.assertEqual(res.returncode, 255, res.stderr)
+        self.assertIn("needs_human", res.stderr)
         return re.search(r"^run (\S+)", res.stdout, re.M).group(1)
 
     def run_info(self, name):
@@ -183,7 +184,7 @@ class Runs(RepoCase):
 
     def test_current_branch_option(self):
         """git: current branch option (GIT-05)"""
-        self.wf = self.write("wf.toml", WORKFLOW.replace('name = "demo"',
+        self.wf = self.write("wf.toml", self.RUN_WORKFLOW.replace('name = "demo"',
                                                           'name = "demo"\n[defaults]\nbranch = "current"'))
         self.commit()
         name = self.start()
@@ -212,7 +213,7 @@ class Runs(RepoCase):
         name = self.start()
         res = run_cli("status", "-C", self.root)
         self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn("| 010 | design | design | pending |", res.stdout)
+        self.assertIn("| 010 | design | human | waiting_human |", res.stdout)
         info = self.run_info(name)
         for ref in (name, info["run_id"][:6], "latest"):
             self.assertEqual(run_cli("status", ref, "-C", self.root).stdout, res.stdout)
@@ -227,7 +228,7 @@ class Runs(RepoCase):
         listed = run_cli("runs", self.wf)
         self.assertEqual(listed.returncode, 0, listed.stderr)
         self.assertIn(name, listed.stdout)
-        self.assertIn("failed", listed.stdout)
+        self.assertIn("needs_human", listed.stdout)
         self.assertIn(name, run_cli("runs", "demo", "-C", self.root).stdout)
 
     def test_prune(self):

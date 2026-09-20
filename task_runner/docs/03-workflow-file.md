@@ -94,9 +94,26 @@ used.
 | `*`, `?`, `[abc]` | within one path segment; never crosses `/` |
 | `**/` at the start or in the middle | zero or more whole directories |
 | a trailing `/**` | everything below that directory, at any depth, but not the directory name itself |
-| a pattern with no `/`, such as `*.lock` | that name in any directory |
+| a **wildcard** pattern with no `/`, such as `*.lock` | that name in any directory. A wildcard-free entry with no `/`, such as `CMakeLists.txt`, is a literal path at the root |
 
 Patterns are relative to `root`, use `/`, and may not start with `/` or contain `..`.
+
+Clarifications settled while building stage 1:
+
+- A `removes` path must be covered by `writes`, like an output: a deletion is a change, and a change
+  outside `writes` is reverted.
+- `outputs` and `removes` conflict only when an entry is identical, or a literal output is matched
+  by a `removes` entry. `outputs = ["src/**"]` beside `removes = ["src/old.cpp"]` is satisfiable.
+- The ignored-path check tests a literal path directly, and a glob by probing a name under its
+  literal prefix. A glob with no literal prefix is checked only after each attempt.
+- `root` may be a subdirectory of a repository. `validate` warns, because snapshots and the
+  clean-tree rule cover the whole repository.
+- A file that a verifying check executes is protected for the check **and for the producer it
+  verifies**, since the producer is the one that could edit it.
+- `[agents.NAME]` accepts a closed set of keys: `kind`, `model`, `sandbox`, `review_mode`,
+  `permission_mode`, `ignore_user_config`, `extra_args`, `argv`, `read_only_args`.
+- A review task must name a `perspective`. Persona codes match `[A-Z][A-Z0-9]*`. Every type in the
+  merged library is validated, used or not.
 
 Two questions compare a pattern with a pattern, which cannot be decided exactly, so they are
 answered **conservatively**:

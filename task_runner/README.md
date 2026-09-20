@@ -19,6 +19,8 @@ Status: **design only. No code exists here yet.** The build waits for the owner'
 | [`docs/05-architecture.md`](docs/05-architecture.md) | Modules, the scheduler, the agent interface, git, state, command line |
 | [`docs/06-scenarios.md`](docs/06-scenarios.md) | WHEN/THEN scenarios, each naming the test that will prove it |
 | [`docs/07-implementation-plan.md`](docs/07-implementation-plan.md) | Build stages, risks, what comes later |
+| [`docs/tutorial/`](docs/tutorial/README.md) | A guided tour with diagrams: the idea, a task end to end, panels and findings, safety, architecture, writing a workflow. Each chapter says whether it is checked against code yet |
+| [`docs/runbook.md`](docs/runbook.md) | Operating a run: commands, stops, recovery. A skeleton until the commands exist |
 | [`library/`](library/) | Draft starter library: task types and reviewer personas. Content, not code |
 | [`examples/book-module.toml`](examples/book-module.toml) | A worked example workflow |
 

@@ -1,7 +1,7 @@
 # 07 — Implementation plan
 
 Status: **the owner gave the go-ahead on 2026-09-19, after the adversarial review was answered
-(amendments B1 to B12). Stage 1 is in progress.** Progress is recorded in the
+(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is next.** Progress is recorded in the
 [task_runner README](../README.md).
 
 ## Approach
@@ -53,6 +53,7 @@ environment before spending effort on panels.
 | **6. Replan** | `replan`, `--reopen` with resumable revert commits, frozen briefs, input manifests, staleness | RUN-04 to RUN-06, RUN-12 to RUN-15 | Reopened work cannot inherit stale acceptance |
 | **7. Live check** | nothing new | see below | Real read, write, verification and rework are in the record, **on a host and profile that `doctor` has qualified** |
 | **8. First real workflow** | `workflows/nyse-m1.toml` | | Usefulness |
+| **9. Tutorial and runbook** | [`docs/tutorial/`](tutorial/README.md) and [`docs/runbook.md`](runbook.md), finished against the real program. The design chapters are drafted early, from these documents; the runbook is completed last | see below | Every command in the runbook was run, and its output pasted from a real run. Every diagram matches the code. A reader who has seen nothing else can write a workflow, run it, and recover from each stop |
 
 Parallel readers come late on purpose: the transaction, the recovery rules and the findings rules
 are where the accuracy lives, and they are easier to get right with one job at a time. The engine
@@ -104,6 +105,23 @@ this container its sandbox cannot start, and the prototype's two Codex reviews c
 events at all: they judged the diff they were sent and never read the repository. So here Codex is
 at most a text-only reviewer, explicitly configured and labelled as such, until it runs on a host
 where its sandbox starts.
+
+### Stage 9: the tutorial and the runbook
+
+Two documents for two readers. The **tutorial** teaches the model and the architecture to someone
+who will write workflows or change the runner: it aims for accuracy and understanding first, and
+uses diagrams freely. The **runbook** is for the person operating a run: what to type, what each
+stop means, how to recover.
+
+Rules that keep them accurate:
+
+- Every chapter carries a status line: *design* (written from the design documents, not yet checked
+  against code), or *verified at stage N* (checked against the program at that stage).
+- A chapter moves to *verified* only when its commands were run and its diagrams compared with the
+  code. After each stage, the chapters that stage touches are re-checked.
+- The tutorial explains and links; the numbered design documents stay the reference. Where they
+  disagree, the design document wins and the tutorial is corrected.
+- Runbook output is pasted from real runs, never written by hand.
 
 ### Stage 8: the NYSE M1 workflow
 

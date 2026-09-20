@@ -25,6 +25,8 @@ def _definition(task, directory):
     expanded = record.read_json(root / 'workflow.expanded.json')
     if task.get('agent'):
         value['agent_profile'] = expanded['agents'].get(task['agent'])
+        if task.get('fallback_agents'):
+            value['fallback_profiles'] = {name: expanded['agents'].get(name) for name in task['fallback_agents']}
     return value
 
 

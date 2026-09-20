@@ -8,11 +8,24 @@ the engine decides what follows.
 import json
 import math
 import os
+import re
 
 from . import proc, record, validate, activity
 
 OK, ENVIRONMENT, PROTOCOL_ERROR, AGENT_ERROR, TIMED_OUT, INTERRUPTED = (
     "ok", "environment", "protocol-error", "agent-error", "timed-out", "interrupted")
+
+
+QUOTA = "quota"
+
+
+def quota_error(text):
+    """Only provider error-channel evidence, never tool output or successful prose."""
+    return isinstance(text, str) and bool(re.search(
+        r"usage_limit_reached|insufficient_quota|rate_limit_exceeded|"
+        r"you(?:'|’)ve hit your (?:usage )?limit|"
+        r"(?:weekly|5.hour|five.hour|session) (?:usage )?limit (?:reached|exceeded)",
+        text, re.IGNORECASE))
 
 
 class AgentResult:
@@ -246,6 +259,8 @@ class CodexEvents:
 
     def result(self, res):
         failure = process_failure(res)
+        if self.failed and quota_error(self.failed) and res.status != "timed-out":
+            failure = AgentResult(QUOTA, error=self.failed, seconds=res.seconds)
         if self.environment:
             failure = AgentResult(ENVIRONMENT, error=self.environment, seconds=res.seconds)
         if failure:
@@ -253,7 +268,7 @@ class CodexEvents:
             return failure
         status, error = OK, ""
         if self.failed:
-            status, error = AGENT_ERROR, self.failed
+            status, error = (QUOTA if quota_error(self.failed) else AGENT_ERROR), self.failed
         elif self.malformed or not self.completed or self.open_turn or self.message_after_completion:
             status, error = PROTOCOL_ERROR, "missing successful terminal event or malformed event stream"
         answer = last_json_object(self.text) if isinstance(self.text, str) else None
@@ -328,9 +343,18 @@ class ClaudeAgent(HeadlessAgent):
 
     def interpret(self, res):
         failure = process_failure(res)
-        if failure:
-            return failure
         text = res.stdout_tail.decode("utf-8", errors="replace")
+        if failure:
+            try:
+                envelope = json.loads(text)
+            except ValueError:
+                envelope = {}
+            if (failure.status == AGENT_ERROR and isinstance(envelope, dict)
+                    and envelope.get('type') == 'result' and envelope.get('is_error') is True
+                    and quota_error(envelope.get('result'))):
+                failure.status, failure.error = QUOTA, envelope['result']
+            if failure.status != QUOTA:
+                return failure
         try:
             data = json.loads(text)
         except ValueError:
@@ -359,6 +383,8 @@ class ClaudeAgent(HeadlessAgent):
         status = ENVIRONMENT if error else OK
         if not error and (data.get("is_error") is not False or data.get("subtype") != "success"):
             status, error = AGENT_ERROR, f"Claude result subtype: {data.get('subtype')}"
+            if quota_error(final) or data.get('subtype') in ('error_rate_limit', 'error_usage_limit'):
+                status, error = QUOTA, final or error
         if status == OK and not isinstance(answer, dict):
             status, error = PROTOCOL_ERROR, "Claude's final answer is not a JSON object"
         cost = data.get("total_cost_usd")

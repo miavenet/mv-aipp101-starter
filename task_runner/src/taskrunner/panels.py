@@ -117,7 +117,7 @@ class Panels:
             for job in pending:
                 amount = 0
                 if job['kind']=='review':
-                    t=self.tasks[job['task']]
+                    t=self.provider_task(self.tasks[job['task']])
                     amount=budgets.cap_for(agents.make(t['agent'],self.wf['agents'][t['agent']]),t)
                     if available <= 0 or amount > available + 1e-9:
                         break
@@ -172,6 +172,10 @@ class Panels:
         job.pop('raw_outcome', None)
         if job['kind'] == 'check':
             job['result'] = outcome
+            return
+        if outcome.status == agents.QUOTA:
+            job['tries'] = max(0, job['tries'] - 1)
+            self.provider_quota(self.tasks[job['task']], outcome)
             return
         if outcome.status == agents.ENVIRONMENT:
             from . import qualification
@@ -261,6 +265,7 @@ class Panels:
         for job in jobs:
             t=self.tasks[job['task']]; directory=os.path.join(self.run.path,job['directory'])
             if job['kind']=='review':
+                t=self.provider_task(t)
                 agent=agents.make(t['agent'],self.wf['agents'][t['agent']])
                 with open(os.path.join(directory,'prompt.md'),encoding='utf-8') as fh:
                     prompt=fh.read()

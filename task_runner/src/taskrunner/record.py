@@ -849,6 +849,13 @@ def render_run_status(info, state):
             attention.append(f"- **{task_id}** is {t['status']}"
                              + (f": {t['reason']}" if t["reason"] else "")
                              + f". See tasks/{t['dir']}/STATUS.md.")
+    selections = [(tid, state['tasks'][tid].get('provider_current')) for tid in state['order']]
+    if any(selection for _, selection in selections):
+        lines += ['', '## Providers']
+        for tid, selection in selections:
+            if selection:
+                lines.append(f"- **{tid}**: {selection['profile']} / {selection['model'] or 'provider default'} "
+                             f"({selection['complexity']}; {selection['reason']}).")
     if state.get("stop_reason"):
         attention.append(f"- The run stopped: {state['stop_reason']}")
     if state["intents"]:
@@ -937,7 +944,7 @@ FILE_NOTES = {
     "stderr.log": "The agent's standard error, streamed and redacted",
     "last-message.txt": "The agent's final message, written by this invocation",
     "schema.json": "The JSON schema the answer was asked to follow",
-    "outcome.json": "How the call ended: ok, protocol-error, agent-error, timed-out, interrupted, environment",
+    "outcome.json": "How the call ended: ok, protocol-error, agent-error, timed-out, interrupted, environment, quota",
 }
 
 

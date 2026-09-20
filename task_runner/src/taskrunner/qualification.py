@@ -116,13 +116,13 @@ def qualify(name, metadata, directory, timeout_s=60, budget_usd=1):
                 target.write_bytes(source.read_bytes())
         subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', 'init', '-q', tmp], check=True)
         sequence = 0
-        environment_failure = None
+        unavailable = None
 
         def call(probe, instruction, *, session_id=None, **data):
-            nonlocal sequence, environment_failure
-            if environment_failure is not None:
-                return agents.AgentResult(agents.ENVIRONMENT,
-                    error="not probed after environment failure: " + environment_failure), None
+            nonlocal sequence, unavailable
+            if unavailable is not None:
+                return agents.AgentResult(unavailable[0],
+                    error="not probed after provider failure: " + unavailable[1]), None
             sequence += 1
             inv = os.path.join(directory, f'invocation-{sequence}')
             os.mkdir(inv)
@@ -134,8 +134,8 @@ def qualify(name, metadata, directory, timeout_s=60, budget_usd=1):
                                budget_usd=budget_usd, read_only=read_only,
                                env=agents.agent_env(os.environ, 'doctor', name))
             add_spend(spend, result)
-            if result.status == agents.ENVIRONMENT:
-                environment_failure = result.error
+            if result.status in (agents.ENVIRONMENT, agents.QUOTA):
+                unavailable = result.status, result.error
             record.write_durable(os.path.join(inv, 'outcome.json'), record.dump_json(result.outcome()))
             valid = result.status == agents.OK and not validate.check_shape(result.structured, PROBE_SCHEMA)
             return result, result.structured['value'] if valid else None
@@ -149,7 +149,7 @@ def qualify(name, metadata, directory, timeout_s=60, budget_usd=1):
         first, value = call('answer', 'Return exactly the value below. Remember it for a later turn.', value=nonce)
         observe('answer', first, value == nonce)
         # Do not repeatedly call a broken environment. No untested capability is granted.
-        if first.status != agents.ENVIRONMENT:
+        if first.status not in (agents.ENVIRONMENT, agents.QUOTA):
             secret = secrets.token_hex(24)
             (root / 'read-probe.txt').write_text(secret)
             result, value = call('read', 'Read the file and return its exact contents as value.', path='read-probe.txt')
@@ -223,32 +223,42 @@ def _check_workflow(wf, force=False):
         cache = {'entries': {}}
     report = {'profiles': {}, 'tasks': {}, 'problems': [], 'spend': empty_spend()}
     report_dir = os.path.join(runs, 'doctor', str(uuid.uuid4()))
+    from .providers import model_for
     for task in wf.tasks:
         if task['kind'] not in ('produce', 'review'):
             continue
-        name = task['agent']
-        profile = wf.agents[name]
-        model = task.get('model') or profile.get('model', '')
-        key, metadata = fingerprint(profile, model, task['kind'] == 'review', wf.root)
-        if key not in report['profiles']:
-            cached = not force and key in cache['entries']
-            entry = cache['entries'].get(key) if cached else qualify(
-                name, metadata, os.path.join(report_dir, key),
-                timeout_s=min(60, task['timeout_min'] * 60), budget_usd=min(1, task['budget_usd']))
-            if not cached:
-                cache['entries'][key] = entry
-                report['spend']['known_usd'] += entry['spend']['known_usd']
-                for field, value in entry['spend']['unpriced'].items():
-                    report['spend']['unpriced'][field] += value
-            report['profiles'][key] = dict(entry, cached=cached)
-        entry = report['profiles'][key]
-        report['tasks'][task['id']] = key
-        missing = required(task, profile) - set(entry['capabilities'])
-        if missing:
-            cause = '; '.join(p['error'] for p in entry['probes'].values() if p.get('error'))
-            report['problems'].append(f"'{task['type']}' needs {', '.join(sorted(missing))}; profile '{name}' "
-                                      f"is qualified for {', '.join(entry['capabilities']) or 'nothing'}"
-                                      + (f": {cause}" if cause else ''))
+        problems = []
+        usable = False
+        for name in [task['agent']] + task.get('fallback_agents', []):
+            profile = wf.agents[name]
+            model = model_for(task, name, wf.agents)
+            key, metadata = fingerprint(profile, model, task['kind'] == 'review', wf.root)
+            if key not in report['profiles']:
+                prior = cache['entries'].get(key)
+                cached = bool(not force and prior and not any(
+                    probe.get('status') == agents.QUOTA for probe in prior['probes'].values()))
+                entry = cache['entries'].get(key) if cached else qualify(
+                    name, metadata, os.path.join(report_dir, key),
+                    timeout_s=min(60, task['timeout_min'] * 60), budget_usd=min(1, task['budget_usd']))
+                if not cached:
+                    cache['entries'][key] = entry
+                    report['spend']['known_usd'] += entry['spend']['known_usd']
+                    for field, value in entry['spend']['unpriced'].items():
+                        report['spend']['unpriced'][field] += value
+                report['profiles'][key] = dict(entry, cached=cached)
+            entry = report['profiles'][key]
+            if name == task['agent']:
+                report['tasks'][task['id']] = key
+            report.setdefault('alternatives', {}).setdefault(task['id'], {})[name] = key
+            missing = required(task, profile) - set(entry['capabilities'])
+            if missing:
+                cause = '; '.join(p['error'] for p in entry['probes'].values() if p.get('error'))
+                problems.append(f"'{task['type']}' needs {', '.join(sorted(missing))}; profile '{name}' "
+                                          f"is qualified for {', '.join(entry['capabilities']) or 'nothing'}"
+                                          + (f": {cause}" if cause else ''))
+            usable = usable or not missing
+        if not usable:
+            report['problems'].extend(problems)
     record.write_durable(cache_path, proc.redact(record.dump_json(cache)))
     record.write_durable(os.path.join(runs, 'qualification.json'), proc.redact(record.dump_json(report)))
     return report
@@ -260,6 +270,10 @@ def attach_run(run, report):
         entry = report['profiles'][key]
         run.state['tasks'][tid]['qualification_key'] = key
         run.state['tasks'][tid]['qualified'] = entry['capabilities']
+        run.state['tasks'][tid]['provider_qualifications'] = {
+            name: {'key': candidate, 'capabilities': report['profiles'][candidate]['capabilities']}
+            for name, candidate in report.get('alternatives', {}).get(tid, {}).items()}
+
     run.state['spend']['known_usd'] += report['spend']['known_usd']
     for key, value in report['spend']['unpriced'].items():
         run.state['spend']['unpriced'][key] += value

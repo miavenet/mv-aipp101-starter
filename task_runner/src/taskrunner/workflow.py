@@ -58,16 +58,16 @@ DEFAULTS_KEYS = {
     "agent": STR, "model": STR, "max_attempts": INT, "timeout_min": NUM, "gate_timeout_min": NUM,
     "budget_usd": NUM, "run_budget_usd": NUM, "max_parallel": INT, "recheck_passed": STR,
     "branch": STR, "commit_trailer": STR, "protected": STRLIST, "diff_cap_bytes": INT,
-    "inputs_cap_bytes": INT, "findings_cap_bytes": INT,
+    "inputs_cap_bytes": INT, "findings_cap_bytes": INT, "complexity": STR,
 }
 TOP_KEYS = {"name": STR, "root": STR, "library": STRLIST, "defaults": TABLE, "agents": TABLE,
-            "task": ANY}
+            "task": ANY, "model_policy": TABLE}
 AGENT_KEYS = {
     "kind": STR, "model": STR, "sandbox": STR, "review_mode": STR, "permission_mode": STR,
     "ignore_user_config": BOOL, "extra_args": STRLIST, "argv": STRLIST, "read_only_args": STRLIST,
 }
 TYPE_KEYS = {
-    "name": STR, "kind": STR, "description": STR, "requires": STRLIST, "review_type": STR,
+    "name": STR, "kind": STR, "description": STR, "requires": STRLIST, "complexity": STR, "review_type": STR,
     "needs_run_dir": BOOL, "agent": STR, "model": STR, "gate": ANY, "protected": STRLIST,
     "prompt": STR, "params": TABLE, "max_attempts": INT, "timeout_min": NUM, "budget_usd": NUM,
 }
@@ -79,7 +79,7 @@ PERSONA_KEYS = {
 
 COMMON_TASK_KEYS = {"id": STR, "type": STR, "title": STR, "needs": STRLIST, "params": TABLE}
 AGENT_TASK_KEYS = {"agent": STR, "model": STR, "timeout_min": NUM, "budget_usd": NUM,
-                   "prompt": STR, "prompt_file": STR, "recheck_passed": STR}
+                   "prompt": STR, "prompt_file": STR, "recheck_passed": STR, "fallback_agents": STRLIST, "complexity": STR}
 TASK_KEYS = {
     "produce": {**COMMON_TASK_KEYS, **AGENT_TASK_KEYS, "max_attempts": INT, "outputs": ANY,
                 "writes": STRLIST, "removes": STRLIST, "gate": ANY, "reviewers": ANY,
@@ -93,7 +93,7 @@ TASK_KEYS = {
 ALL_TASK_KEYS = set().union(*TASK_KEYS.values())
 PANEL_ENTRY_KEYS = {
     "perspective": STR, "advisory": BOOL, "agent": STR, "model": STR, "type": STR, "prompt": STR,
-    "prompt_file": STR, "recheck_passed": STR, "timeout_min": NUM, "budget_usd": NUM,
+    "prompt_file": STR, "recheck_passed": STR, "timeout_min": NUM, "budget_usd": NUM, "fallback_agents": STRLIST, "complexity": STR,
     "params": TABLE,
 }
 GATE_KEYS = {"run": STR, "new": BOOL, "fail_pattern": STR}
@@ -122,6 +122,7 @@ class Workflow:
     git_toplevel: str = ""
     library_dirs: list = field(default_factory=list)
     defaults: dict = field(default_factory=dict)
+    model_policy: dict = field(default_factory=dict)
     agents: dict = field(default_factory=dict)
     types: dict = field(default_factory=dict)
     personas: dict = field(default_factory=dict)
@@ -248,6 +249,13 @@ class _Loader:
                 self.err(f"{label} [defaults]: '{key}' must be at least 1")
         wf.defaults = defaults
 
+        wf.model_policy = self.check_keys(top.get('model_policy', {}),
+            {level: TABLE for level in ('mechanical', 'standard', 'high')}, f'{label} [model_policy]')
+        for level, models in list(wf.model_policy.items()):
+            wf.model_policy[level] = self.check_keys(models,
+                {provider: STR for provider in ('claude', 'codex', 'command')}, f'model_policy.{level}')
+            if any(not model.strip() for model in wf.model_policy[level].values()):
+                self.err(f'model_policy.{level}: model names must not be empty')
         self.load_agents(top.get("agents", {}), label)
         self.check_root()
         self.load_library(top.get("library", []), label)
@@ -595,7 +603,44 @@ class _Loader:
                 self.err(f"{where}: agent '{agent}' is not defined; built in are "
                          f"{', '.join(BUILTIN_AGENTS)}, others need an [agents.{agent}] table")
             task["agent"] = agent
+            alternatives = good.get("fallback_agents", [])
+            if alternatives:
+                task["fallback_agents"] = alternatives
+            if len(set([agent] + alternatives)) != len([agent] + alternatives):
+                self.err(f"{where}: fallback_agents must be unique and exclude the primary agent")
+            for alternative in alternatives:
+                if alternative not in wf.agents:
+                    self.err(f"{where}: fallback agent '{alternative}' is not defined")
             task["model"] = self.setting("model", good, persona, tdef) or ""
+            complexity = self.setting('complexity', good, persona, tdef) or 'standard'
+            if complexity not in ('mechanical', 'standard', 'high'):
+                self.err(f"{where}: complexity must be mechanical, standard, or high")
+            if wf.model_policy or self.setting('complexity', good, persona, tdef):
+                task['complexity'] = complexity
+            models = wf.model_policy.get(complexity, {})
+            chosen = {}
+            for name in [agent] + alternatives:
+                profile = wf.agents.get(name, {})
+                explicit_model = next((source['model'] for source in (good, persona or {}, tdef or {})
+                                       if source.get('model')), '') if name == agent else ''
+                model = (explicit_model or models.get(profile.get('kind'), '')
+                         or (task['model'] if name == agent else '') or profile.get('model', ''))
+                if models or alternatives:
+                    chosen[name] = model
+                if name != agent and profile.get('kind') != 'command' and not model:
+                    self.err(f"{where}: fallback agent '{name}' needs a profile model or complexity model mapping")
+                if name != agent:
+                    primary = wf.agents.get(agent, {})
+                    def bypass(p):
+                        return (p.get('sandbox') in BYPASS_SANDBOXES
+                                or p.get('permission_mode') in BYPASS_PERMISSION_MODES
+                                or bool(set(p.get('extra_args', []) + p.get('argv', [])) & BYPASS_ARGS))
+                    if bypass(profile) and not bypass(primary):
+                        self.err(f"{where}: fallback '{name}' may not widen permission controls")
+                    if profile.get('review_mode', 'repository') != primary.get('review_mode', 'repository'):
+                        self.err(f"{where}: fallback '{name}' must preserve review_mode")
+            if chosen:
+                task['provider_models'] = chosen
             task["timeout_min"] = self.setting("timeout_min", good, None, tdef)
             task["budget_usd"] = self.setting("budget_usd", good, None, tdef)
             task["recheck_passed"] = self.setting("recheck_passed", good, None, None)

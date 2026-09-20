@@ -282,3 +282,17 @@ retains findings and acceptance history; repeated format failure does not cycle 
 ## 2026-09-20 — User-requested project pause
 
 Scenario attempt 7 progressed beyond producer protocol validation into review, but the panel blocked: missing required finding resolutions in the engineering response, and missing successful terminal event or malformed stream for spec compliance. No quota cause established. Candidate patch is retained (165661 bytes), contracts remain accepted, and no NYSE agent processes were running at pause. Do not retry until explicitly resumed. Recovery details: `nyse-pause-handoff.md`. The producer feedback fix enabled progress but did not resolve all reviewer protocol failure modes.
+
+## Provider routing implementation — NYSE remains paused
+
+Implemented explicit task fallback profiles and normalized mechanical/standard/high
+complexity mappings above the adapters. Native quota errors are distinguished from
+protocol failures. Qualification covers each actual provider/model/control combination;
+selection preserves work, findings, budgets and fresh-session boundaries. Durable quota
+transitions and selection history support recovery. A bounded cooldown prevents immediate
+repeated calls; it is not an inferred account reset time. No reliable near-limit telemetry
+source has yet been established, so predictive switching is not claimed. See
+`provider-routing.md` for the configuration and deterministic verification scenarios.
+This work does not retry, replan or resume the paused NYSE run.
+
+Validation: the final complete model-free runner suite passed **308 tests** in 96.268 seconds, including 14 provider-routing scenarios. Qualification now stops further probes after quota exhaustion and does not permanently cache that temporary failure. No live provider calls were made for this change.

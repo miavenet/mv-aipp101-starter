@@ -13,6 +13,10 @@ budget pause without repeating completed reviews. `doctor` qualifies profiles us
 effects; `check-gates` tests commands on disposable copies. Accepted commits contain exactly the
 verified candidate.
 
+[Provider routing](docs/provider-routing.md) adds automatic quota fallback between qualified
+profiles and configurable `mechanical` / `standard` / `high` complexity-to-model mappings.
+Provider changes retain task progress, review findings and spending history.
+
 Run the model-free tests from the repository root:
 
 ```sh

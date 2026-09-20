@@ -283,3 +283,13 @@ focus = [ "...", "..." ]             # what this reviewer looks at
 blocking = [ "...", "..." ]          # what justifies a blocking finding from this perspective
 out_of_scope = [ "...", "..." ]      # what to leave to the other reviewers
 ```
+
+## Provider routing and complexity
+
+Producer/reviewer tasks and inline reviewers accept `complexity = "mechanical"`,
+`"standard"`, or `"high"`, and an ordered `fallback_agents = ["profile-name"]` list.
+Complexity may also be set in `[defaults]` or a task type. Top-level
+`[model_policy.<complexity>]` tables map `claude` and `codex` to model identifiers.
+See [provider routing](provider-routing.md) for precedence, controls, quota handling,
+examples and recovery semantics. Existing workflows without routing settings retain
+their configured primary model and profile.

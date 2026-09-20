@@ -1,9 +1,9 @@
 # Runbook
 
-Status: **partly verified at stage 5**. The [stage 4 CLI walkthrough](stage-4-walkthrough.md)
+Status: **partly verified at stage 6**. The [stage 4 CLI walkthrough](stage-4-walkthrough.md)
 exercises qualification, preflight and human tasks. The [stage 5 walkthrough](stage-5-walkthrough.md)
 exercises panels, rework and `resolve`; tests cover budget pauses, retry, branch safety and parallel
-process cleanup. `replan` remains stage 6 work.
+process cleanup. The [stage 6 walkthrough](stage-6-walkthrough.md) verifies replan and reopening.
 
 For the ideas behind these procedures, read the [tutorial](tutorial/README.md).
 
@@ -46,7 +46,7 @@ flowchart TB
 - **Do not edit the work tree or the run branch while a run is active or paused.** `resume` will
   refuse to continue if you did.
 
-## 3. Stops that need you — verified through stage 5, except replan
+## 3. Stops that need you — verified through stage 6
 
 | STATUS.md says | Do |
 |---|---|
@@ -65,9 +65,10 @@ flowchart TB
 | The runner was killed | `runner resume`. It reconciles first. If an agent from the dead runner is still alive, it refuses; `resume --stop-orphans` stops it |
 | Reconciliation error | The message states what was expected and what was found. Restore that, then `resume`. The runner will not guess |
 
-## 5. Changing the plan mid-run — to verify at stage 6
+## 5. Changing the plan mid-run — verified at stage 6
 
-- Edit the workflow file, then `runner replan RUN`. It shows the difference per task and applies
+- Settle any active producer transaction. Edit and commit the workflow definitions so the tree is
+  clean, then `runner replan RUN` (or pass an external revised file with `--workflow FILE`). It shows the difference per task and applies
   what is safe: new tasks, edits to tasks that have not been accepted.
 - Changing an accepted task needs `runner replan RUN --reopen TASK`. The runner lists everything
   affected and undoes those commits with **revert commits**, newest first. The branch is never

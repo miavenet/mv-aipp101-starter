@@ -417,7 +417,7 @@ runner retry RUN TASK [--apply-patch] fresh attempts for a failed or blocked tas
                                       task's transaction is open, naming the task the run waits on (B7)
 runner resolve RUN FINDING --as resolved|advisory|upheld [-m NOTE]
                                       a person settles an escalated finding; then `resume` (B10)
-runner replan RUN [--reopen TASK]     bring an edited workflow into the run, where safe
+runner replan RUN [--workflow FILE] [--reopen TASK]     bring an edited workflow into the run, where safe
 runner prune                          delete the pinned refs of finished or deleted runs (B6)
 ```
 

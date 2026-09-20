@@ -8,6 +8,8 @@ events through stdin when installed from hooks.json.
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
+import importlib.util
 import json
 import os
 import pathlib
@@ -31,9 +33,23 @@ def git_branch(cwd: str) -> str | None:
 
 
 def append_jsonl(record: dict) -> None:
-    LOG.parent.mkdir(parents=True, exist_ok=True)
-    with LOG.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, sort_keys=True, ensure_ascii=False, default=str) + "\n")
+    # Reuse the project's tested redaction rules; never write unsanitized hook payloads.
+    source = pathlib.Path(__file__).resolve().parents[1] / ".claude/hooks/log-hook.py"
+    spec = importlib.util.spec_from_file_location("hook_redaction", source)
+    logger = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(logger)
+    record["task_runner"] = {k.removeprefix("TASK_RUNNER_").lower(): os.environ[k]
+                             for k in ("TASK_RUNNER_RUN", "TASK_RUNNER_TASK", "TASK_RUNNER_INVOCATION",
+                                       "TASK_RUNNER_AGENT_KIND") if k in os.environ}
+    os.umask(0o077)
+    LOG.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    with (LOG.parent / ".codex-hook.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        maximum = int(os.environ.get("HOOK_LOG_MAX_BYTES", str(20 * 1024 * 1024)))
+        if maximum and LOG.exists() and LOG.stat().st_size > maximum:
+            LOG.replace(str(LOG) + ".1")
+        with LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(logger.scrub(record), sort_keys=True, ensure_ascii=False, default=str) + "\n")
 
 
 def hook() -> int:
@@ -43,6 +59,8 @@ def hook() -> int:
     except json.JSONDecodeError as exc:
         append_jsonl({"timestamp": now(), "hook_event_name": "invalid-json", "error": str(exc), "raw": raw[:4000]})
         return 0
+    if not isinstance(payload, dict):
+        payload = {"value": payload}
     append_jsonl({
         "timestamp": now(),
         "session_id": payload.get("session_id"),
@@ -90,4 +108,10 @@ def status() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(hook() if len(sys.argv) > 1 and sys.argv[1] == "--hook" else status())
+    if len(sys.argv) > 1 and sys.argv[1] == "--hook":
+        try:
+            hook()
+        except Exception:
+            pass  # Passive telemetry must never block or rewrite the agent operation.
+    else:
+        raise SystemExit(status())

@@ -894,6 +894,11 @@ def render_task_status(task_id, t, tdir):
 
 
 FILE_NOTES = {
+    "activity.json": "Hook telemetry routing, correlation IDs and configured source hashes",
+    "hooks/": "Native headless-agent hook events; observational, not acceptance evidence",
+    "hooks.jsonl": "Native hook events, correlated with run/task/invocation and session/tool IDs",
+    "hooks.log": "Readable native hook events for tail -f",
+
     "run.json": "Identity of the run (id, workflow, root, branch, base commit) and its totals",
     "STATUS.md": "This directory in words. Regenerated from state.json",
     "index.json": "This file: what every entry in this directory is",

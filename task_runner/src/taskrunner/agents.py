@@ -9,7 +9,7 @@ import json
 import math
 import os
 
-from . import proc, record, validate
+from . import proc, record, validate, activity
 
 OK, ENVIRONMENT, PROTOCOL_ERROR, AGENT_ERROR, TIMED_OUT, INTERRUPTED = (
     "ok", "environment", "protocol-error", "agent-error", "timed-out", "interrupted")
@@ -274,12 +274,17 @@ class HeadlessAgent(Agent):
         argv = self.build_argv(invocation_dir, schema, session_id, model, budget_usd, read_only)
         record.write_durable(os.path.join(invocation_dir, "argv.json"), proc.redact(record.dump_json(
             {"argv": argv, "cwd": cwd, "read_only": read_only, "model": model, "session_id": session_id})))
+        env = activity.prepare(self.kind, cwd, invocation_dir, env)
         parser = CodexEvents() if self.kind == "codex" else None
+        telemetry = activity.CodexTelemetry(cwd, env) if parser else None
+        def on_stdout(data):
+            parser.feed(data)
+            telemetry.feed(data)
         res = proc.run_process(argv, cwd=cwd, env=env, stdin_data=prompt.encode("utf-8"),
                                stdout_path=os.path.join(invocation_dir, "stdout.log"),
                                stderr_path=os.path.join(invocation_dir, "stderr.log"),
                                timeout_s=timeout_s, on_start=on_start,
-                               on_stdout=parser.feed if parser else None)
+                               on_stdout=on_stdout if parser else None)
         answer = parser.result(res) if parser else self.interpret(res)
         # Codex's output file is never used as a fallback for a missing terminal event.
         raw = os.path.join(invocation_dir, "final.raw")

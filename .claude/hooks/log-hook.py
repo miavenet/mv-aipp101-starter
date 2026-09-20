@@ -399,6 +399,9 @@ def log_call():
             "payload": clean,
             "pid": os.getpid(),
             "ppid": os.getppid(),
+            "task_runner": scrub({k.removeprefix("TASK_RUNNER_").lower(): os.environ[k]
+                                  for k in ("TASK_RUNNER_RUN", "TASK_RUNNER_TASK", "TASK_RUNNER_INVOCATION",
+                                            "TASK_RUNNER_AGENT_KIND") if k in os.environ}),
         }
         if sl:
             record["statusline"] = sl

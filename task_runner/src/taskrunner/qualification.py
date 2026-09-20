@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import uuid
 
-from . import agents, gitops, proc, record, validate
+from . import agents, gitops, proc, record, validate, activity
 
 PROBE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["value"],
                 "properties": {"value": {"type": "string"}}}
@@ -68,13 +68,15 @@ def fingerprint(profile, model, read_only, root):
         if not profile.get('ignore_user_config'):
             candidates.append(Path.home()/'.claude'/'settings.json')
         candidates.extend([Path(root)/'.claude'/'settings.json', Path(root)/'.claude'/'settings.local.json'])
+    candidates.extend(activity.assets(root, profile["kind"]))
     for path in candidates:
         if path.is_file():
             config_hashes[str(path)] = record.sha256_file(path)
     metadata = {'cache_version': CACHE_VERSION, 'profile': profile, 'model': model,
                 'read_only': read_only, 'host': host_identity(), 'version': version, 'root': os.path.abspath(root),
                 'binaries': files, 'config_hashes': config_hashes, 'capabilities': list(CAPABILITIES),
-                'adapter_sha256': record.sha256_file(agents.__file__)}
+                'adapter_sha256': record.sha256_file(agents.__file__),
+                'observer_sha256': record.sha256_file(activity.__file__)}
     key = hashlib.sha256(record.dump_json(metadata)).hexdigest()
     return key, metadata
 
@@ -106,8 +108,8 @@ def qualify(name, metadata, directory, timeout_s=60, budget_usd=1):
         # Qualify with the workflow's project settings as well as the inherited user settings.
         # Store only hashes in metadata; configuration contents never enter logs or prompts.
         project = Path(metadata['root'])
-        for relative in ('.codex/config.toml', '.claude/settings.json', '.claude/settings.local.json'):
-            source = project / relative
+        for source in activity.assets(project, profile['kind']):
+            relative = source.relative_to(project)
             if source.is_file():
                 target = root / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +181,11 @@ def qualify(name, metadata, directory, timeout_s=60, budget_usd=1):
                                      path='sentinel.txt', contents='CHANGED')
                 observe('boundary', result, result.status == agents.OK and _read(root / 'sentinel.txt') == sentinel
                         and (root / 'sentinel.txt').stat().st_mode == sentinel_mode)
+    observed = sorted({str(row.get('event') or row.get('hook_event_name'))
+                       for inv in Path(directory).glob('invocation-*')
+                       for row in activity.read_events(inv / 'hooks', 1000)})
     return {'capabilities': capabilities, 'probes': probes, 'spend': spend, 'metadata': metadata,
+            'observed_activity': observed,
             'directory': directory, 'orphan_detection': 'strong' if platform.system() == 'Linux' else 'weaker (ps fallback)'}
 
 

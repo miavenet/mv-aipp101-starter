@@ -8,7 +8,7 @@ import signal
 from types import SimpleNamespace
 import uuid
 
-from . import __version__, engine, gitops, record, workflow, qualification, preflight, agents, replan
+from . import __version__, engine, gitops, record, workflow, qualification, preflight, agents, replan, activity
 
 EXIT_OK, EXIT_FAILED, EXIT_HUMAN = 0, 2, 255
 
@@ -65,6 +65,13 @@ def _main(argv=None):
     p.add_argument("-C", dest="where", default=".", metavar="DIR", help="a directory inside the "
                    "repository (default: the current one)")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("activity", help="show recent native hook events while headless agents work")
+    p.add_argument("run", nargs="?", default="latest")
+    p.add_argument("--task")
+    p.add_argument("--tail", type=int, default=20)
+    p.add_argument("-C", dest="where", default=".", metavar="DIR")
+    p.set_defaults(func=cmd_activity)
 
     p = sub.add_parser("runs", help="list runs with status, cost and date")
     p.add_argument("workflow", help="a workflow file, or the name of a workflow")
@@ -244,6 +251,7 @@ def cmd_doctor(args):
         print(f"{meta['profile']['kind']} {meta['model'] or '(default model)'} {mode}: "
               + (", ".join(entry["capabilities"]) or "no capabilities qualified")
               + (" (cached)" if entry["cached"] else ""))
+        print("  observed activity: " + (", ".join(entry.get("observed_activity", [])) or "none; check hook configuration/trust and stdout.log"))
         if entry["orphan_detection"].startswith("weaker"):
             print("warning: orphan detection is weaker on this host")
     print("qualification: " + os.path.join(record.runs_dir_for(gitops.Git(wf.root).top), "qualification.json"))
@@ -507,4 +515,15 @@ def cmd_replan(args):
         except (replan.Refused, gitops.GitError, gitops.RevertConflict) as exc:
             return fail(str(exc))
     print(f"Continue with: runner resume {run.name}")
+    return EXIT_OK
+
+
+def cmd_activity(args):
+    if args.tail < 1 or args.tail > 1000:
+        return fail("--tail must be between 1 and 1000")
+    try:
+        path = record.resolve_run(_runs_dir(args.where), args.run)
+    except record.RecordError as exc:
+        return fail(str(exc))
+    sys.stdout.write(activity.render(path, args.task, args.tail))
     return EXIT_OK

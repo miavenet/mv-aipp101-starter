@@ -42,6 +42,8 @@ flowchart TB
 
 - `runner start WORKFLOW` creates a run, checks out `run/<workflow>-<uuid8>`, and works until it is
   done or needs something.
+- While it runs, use `runner activity latest --tail 20` for recent agent tool/hook events. See
+  [headless observability](headless-observability.md) for provenance and missing-event limitations.
 - While it runs, read `.runs/<workflow>/<run>/STATUS.md`; it is regenerated on every state change.
 - **Do not edit the work tree or the run branch while a run is active or paused.** `resume` will
   refuse to continue if you did.

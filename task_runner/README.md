@@ -78,3 +78,6 @@ StrongDM's Attractor and agate, the landscape, what Claude Code and Codex offer 
 and a throwaway prototype with a recorded live run. Its `design/` folder described a simpler runner
 (a flat task list with review built into every task). This directory supersedes that design; the
 research and the prototype's findings still stand.
+
+Headless agents expose per-invocation hook logs and `runner activity`; see
+[observability](docs/headless-observability.md) for verified Claude/Codex behavior.

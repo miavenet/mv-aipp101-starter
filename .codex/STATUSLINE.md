@@ -18,3 +18,9 @@ permission mode, tool identifiers, and the complete event payload.
 The hook commands are asynchronous except `SessionEnd`. They only log and do
 not block or rewrite operations. See the official Hooks documentation for the
 stdin event schema and async-hook limitations.
+
+When launched by task_runner, `CODEX_HOOK_LOG` points to the invocation's private
+`hooks/hooks.jsonl`. Records carry `task_runner` correlation fields and use the
+Claude hook logger's redaction rules. `ExecStream.*` records come from Codex's
+JSON exec stream rather than native hooks; the payload preserves that provenance.
+Use `runner activity` to view recent events across parallel tasks.

@@ -59,9 +59,9 @@ flowchart TB
     S7 -- no --> RW
     S7 -- yes --> ACC["ACCEPTED:<br/>commit exactly CANDIDATE,<br/>freeze outputs"]
 
-    classDef free fill:#e8f4e8,stroke:#4a4
-    classDef cheap fill:#fff4d6,stroke:#c90
-    classDef costly fill:#fde2e2,stroke:#c44
+    classDef free fill:#e8f4e8,stroke:#4a4,color:#111111
+    classDef cheap fill:#fff4d6,stroke:#c90,color:#111111
+    classDef costly fill:#fde2e2,stroke:#c44,color:#111111
     class S1,S2,S3 free
     class S4,S5 cheap
     class S6,S7 costly

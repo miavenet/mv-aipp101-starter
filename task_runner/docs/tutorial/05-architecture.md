@@ -70,20 +70,23 @@ leak into A's review and A's commit. So the unit of exclusion is the whole life 
 ```mermaid
 gantt
     title One producer owns the work tree from first write to commit
-    dateFormat X
-    axisFormat %s
+    dateFormat YYYY-MM-DD HH:mm
+    axisFormat %H:%M
+    todayMarker off
     section Producer A (active)
-    agent writes            :a1, 0, 4
-    gates (writer, alone)   :a2, 4, 6
-    commit                  :a5, 10, 11
+    agent writes            :a1, 2026-01-01 00:00, 4h
+    gates (writer, alone)   :a2, after a1, 2h
+    commit                  :a5, after r1, 1h
     section A's readers (parallel)
-    review: principal eng.  :r1, 6, 10
-    review: spec compliance :r2, 6, 9
-    read-only check         :r3, 6, 8
+    principal engineer review :r1, after a2, 4h
+    spec compliance review    :r2, after a2, 3h
+    read-only check           :r3, after a2, 2h
     section Producer B
-    waits for A's transaction to end :crit, b0, 0, 11
-    agent writes            :b1, 11, 15
+    waits for A's transaction to end :crit, b0, 2026-01-01 00:00, 11h
+    agent writes            :b1, after a5, 4h
 ```
+
+The hour marks illustrate ordering and overlap; they are not estimates of actual run time.
 
 Inside a transaction, either **one writer** runs or **any number of readers** run, never both. This
 is where the parallelism is: a five-person panel takes as long as its slowest member.

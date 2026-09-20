@@ -91,12 +91,15 @@ def apply_review(ledger, reviewer, answer, candidate, changes):
             f['status'] = 'open'
         f['version'] += 1
         f['history'].append(dict(event='resolution', round=round_no, **resolution))
+    outside_rework = []
     for finding in answer['findings']:
         severity = finding['severity']
         if reviewer.get('advisory') or (round_no > 1 and severity == 'blocking'
                 and not inside(finding['location'], changes)
                 and not inside(finding['caused_by'], changes)):
             severity = 'advisory'
+            if not reviewer.get('advisory'):
+                outside_rework.append({'location': finding['location'], 'caused_by': finding['caused_by']})
         code = reviewer['persona_code']
         number = result['next_ids'].get(code, 0) + 1
         result['next_ids'][code] = number
@@ -107,7 +110,14 @@ def apply_review(ledger, reviewer, answer, candidate, changes):
         result['findings'].append(f)
     verdict = 'block' if blockers(result, rid) else 'pass'
     if answer['verdict'] != verdict:
-        raise ProtocolError(f"verdict disagrees with ledger: expected {verdict}")
+        detail = ''
+        if outside_rework:
+            detail = (f"; new blockers did not match changed lines: {outside_rework!r}. "
+                      "Use an exact repository-relative path:line or path:line-line in location "
+                      "or caused_by, without section names, suffixes or explanatory prose. "
+                      "Put explanations in detail. If unrelated to the rework, report advisory; "
+                      "do not downgrade a regression just to obtain pass.")
+        raise ProtocolError(f"verdict disagrees with ledger: expected {verdict}" + detail)
     result['reviewers'][rid] = {'round': round_no, 'last_seen_candidate': candidate,
                                'verdict': verdict}
     return result, verdict

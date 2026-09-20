@@ -78,6 +78,22 @@ class Panels(EngineCase):
             self.assertTrue(os.path.isdir(self.task_file(a,'round-1',f'invocation-{n}')))
         self.check_invariants()
 
+    def test_protocol_retry_receives_diagnostic_and_keeps_real_blocker(self):
+        a, b = self.setup_panel()
+        invalid = review([finding()], verdict='pass')
+        self.script({'make': [GOOD, {'answer': done(responses=[dict(
+            finding='make/PE-1', action='fixed', note='Fixed')])}],
+            a: [{'answer': invalid},
+                {'answer': review([finding()]), 'match': 'verdict disagrees with ledger: expected block'},
+                {'answer': review(resolutions=[resolution()])}], b: [PASS, PASS]})
+        self.assertEqual(self.start(), 0, self.output)
+        self.assertEqual(self.count(a), 3)
+        self.assertEqual(self.count('make'), 2)
+        with open(self.task_file(a, 'round-1', 'invocation-2', 'prompt.md')) as fh:
+            self.assertIn('verdict disagrees with ledger: expected block', fh.read())
+        self.assertEqual(self.ledger()['findings'][0]['status'], 'resolved')
+        self.check_invariants()
+
     def test_escalation_holds_tree_and_advisory_resolution_does_not_rerun(self):
         a,b=self.setup_panel()
         disputed=dict(finding='make/PE-1',action='disputed',note='This is intentional')

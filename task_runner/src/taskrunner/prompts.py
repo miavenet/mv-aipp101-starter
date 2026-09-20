@@ -248,7 +248,9 @@ def review_prompt(task, template, *, persona, target, brief, diff, full_path, op
               'diff': diff_text(diff, caps['diff_cap_bytes'], full_path),
               'findings': mode + '\n\n' + fence('open findings and author responses', findings_text),
               'rules': rules_text([], [], []) + '\n- Do not change any file. Start a fresh review session.\n'
-                       '- Locations use path:line or path:line-line. The verdict must match the '
+                       '- Locations use exact repository-relative path:line or path:line-line, with no prose suffix. '
+                       'caused_by is an exact changed path:line reference or an empty string; put explanations in detail. '
+                       'The verdict must match the '
                        'blocking findings remaining after advisory and rework-diff rules.\n'
                        + ('- This reviewer is advisory: all findings are advisory and verdict is pass.\n'
                           if task.get('advisory') else ''),

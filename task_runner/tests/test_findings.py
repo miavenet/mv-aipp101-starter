@@ -68,6 +68,19 @@ class Findings(unittest.TestCase):
                 self.assertEqual(a['findings'][0]['severity'], expected)
         self.assertFalse(f.inside('src/a#made-up-section', {'src/a': [(1,2)]}))
 
+    def test_malformed_rework_reference_explains_rejection_without_mutating_ledger(self):
+        a = self.initial()
+        original = copy.deepcopy(a)
+        answer = review([finding('src/a:2 (against section 4)', caused_by='rework hunk')],
+                        resolutions=[resolution()])
+        with self.assertRaisesRegex(f.ProtocolError, 'without section names, suffixes'):
+            f.apply_review(a, R, answer, 'C2', {'src/a': [(2, 3)]})
+        self.assertEqual(a, original)
+        answer['findings'][0]['location'] = 'src/a:2'
+        fixed, verdict = f.apply_review(a, R, answer, 'C2', {'src/a': [(2, 3)]})
+        self.assertEqual(verdict, 'block')
+        self.assertEqual(fixed['findings'][-1]['severity'], 'blocking')
+
     def test_responses_survive_gate_failure_and_renew_on_unresolved(self):
         a = self.initial()
         a = f.respond(a, done(responses=[dict(finding='make/PE-1',action='fixed',note='fixed')]), 2)

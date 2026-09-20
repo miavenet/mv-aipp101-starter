@@ -12,7 +12,7 @@ what was turned down, and why. Later documents refer to these as D1 to D16.
 | D5 | Several reviewers on the same work: how are verdicts combined? | **Blocking and advisory findings, one consolidated rework.** The whole panel runs before anything goes back. The work passes when no blocking finding is open. A reviewer can be marked advisory | One at a time: a late objection arrives after several full loops. Majority vote: a spec or security objection could be outvoted. Lead reviewer agent: an extra model call every round, and judgement in place of rules |
 | D6 | How much runs in parallel at first? | **Readers in parallel, writers one at a time.** Reviews and read-only checks run together up to `max_parallel`. Producers run singly, in plan order. A writer never runs while readers are running | Fully serial: a five-person panel would take five times as long for nothing. Worktree per task: merge handling and a C++ build directory per worktree. Deferred |
 | D7 | What makes a producer's work accepted? | **Every producer needs a verifier**: its own gates, a `check`, a `review` or a `human` task. A workflow with an unverified producer is rejected at load. Cheap verifiers run first | Gate always mandatory: for a document, a script checks form, not substance. Verification optional: reopens "accepted because the agent said so" |
-| D8 | When may a dependent task start? | **Only after upstream is accepted.** Accepted outputs are **frozen**: protected against every later task unless that task claims them in its own `outputs` | Start early and redo if upstream changes: wasted spend and stale tracking across the DAG. Per-edge choice: a subtle correctness decision on every author |
+| D8 | When may a dependent task start? | **Only after upstream is accepted.** Accepted outputs are **frozen**: protected against every later task unless that task claims them in its own `writes` (B4) | Start early and redo if upstream changes: wasted spend and stale tracking across the DAG. Per-edge choice: a subtle correctness decision on every author |
 | D9 | What happens to the DAG when a task fails? | **Set the failed work aside and continue other branches.** The changes are saved as a patch, the tree returns to the last accepted state, dependants are skipped, independent branches run on. `retry` re-applies the patch or starts clean | Stop at first failure: one stuck task idles a wide DAG. Continue on top of failed work: mixes broken changes into later diffs, gates and commits |
 | D10 | What does the workflow file look like? | **One TOML file**: `[[task]]` entries with `type`, `needs`, parameters and `outputs`. `reviewers = [...]` on a producer expands into a panel. `validate` prints the expanded DAG; `graph` writes Graphviz DOT for viewing | DOT as the source format: hand-written parser, prompts and lists sit badly in attributes. One file per task: the DAG is scattered and hard to review |
 | D11 | How are runs created, named and resumed? | **`start` always creates a run; `resume` continues one.** Directory `<UTC timestamp>-<uuid8>`, full UUID in `run.json` and exported to every agent call. The workflow file is copied into the run | One `run` command that decides: easy to resume when you meant to restart, and both mistakes cost money. One overwritten state per workflow: loses the history the owner wants to review |
@@ -28,7 +28,7 @@ The owner can overrule any of these.
 
 | Topic | Assumed |
 |---|---|
-| Settings precedence | task, then persona, then type, then workflow `[defaults]`, then built-in |
+| Settings precedence | task, then persona, then type, then workflow `[defaults]`, then built-in. `protected` is the exception: the union of every level, never narrowed (B9) |
 | Reviewer's agent | The same agent as the author, in a new read-only session. A persona or a task can name another |
 | Rework limit | `max_attempts = 3` executions of a producer, whatever sent it back. Protocol retries (2 per call) are counted apart (A6) |
 | Passed reviewers after rework | Re-run on the rework diff only (`recheck_passed = "diff"`); `"never"` is allowed |
@@ -36,7 +36,7 @@ The owner can overrule any of these.
 | Agents | Claude Code, Codex, and any command, as designed in the research |
 | Codex in this container | **Withdrawn, see A5.** "Reviewer only" was never established: the recorded Codex reviews read no files. Roles follow what `doctor` qualifies |
 | Run records in git | `.runs/` ignores itself. Committing a run record is the owner's choice |
-| Language | Python 3.11+, standard library only |
+| Language | Python 3.11+, standard library only. Linux first; process identity is weaker elsewhere (B6) |
 
 ## Amendments after the design review (2026-09-19)
 
@@ -59,3 +59,26 @@ confirmed. The full reply, including where a different remedy was chosen and why
 | A10 | P1-10 | **Input manifests** per accepted task; overlapping writers must be dependency-ordered; a claiming task re-runs the gates of accepted work it touched; review-only consumers are marked stale; `--reopen` computes the affected closure and undoes it with revert commits; prompt files and `root` are frozen at start | D8, D12 |
 | A11 | P2-11 | **Budget by reservation** before dispatch; spend reported as known, reserved and unpriced; no dollar promise for agents that report no cost; the `max_tokens` idea is dropped because usage arrives only when a turn ends; logs streamed to disk | defaults |
 | A12 | P2-12 | **Gates are invariants unless marked `new`**; `check-gates` reports pass, fail or error and only objects where a `new` gate does not fail for the right reason. **No-progress needs the same failure and the same candidate tree** | D7 |
+
+## Amendments after the adversarial review (2026-09-19)
+
+A second, adversarial review of the amended design
+([review](../../reviews/task-runner-adversarial-review.md)) raised 38 findings: 7 blockers, 18 major,
+13 minor. The git and glob claims were reproduced before acting. All 38 were accepted as defects;
+five got a different remedy from the one proposed. The reply is in
+[the response](../../reviews/task-runner-adversarial-review-response.md).
+
+| # | Findings | Amendment | Refines |
+|---|---|---|---|
+| B1 | ADV-01, 12, 24, 25 | **The review protocol is made satisfiable.** Advisory findings close as `noted` when raised; `resolutions` cover open blocking findings only. The rework diff is per reviewer, from its `last_seen_candidate`. A rework prompt holds the immediate cause plus the blocking findings still needing a response, and `responses` cover exactly those. `resume` is an optimisation, never required. `retry` starts a new line of work: round 1 again, old findings `superseded` | A6, A7, D15 |
+| B2 | ADV-02, 35, 36, 38 | **The run branch is checked out, and the index follows every commit** (`git read-tree HEAD` after `update-ref`, inside the commit intent). One reused scratch index per run. `branch = "current"` creates no branch. Restores remove the directories they emptied | D13, A3 |
+| B3 | ADV-03, 08, 09, 21 | **Git is required, and the work must be visible to it.** Ignored declared paths are refused, at load and after each attempt. `.gitignore`, `.gitattributes`, `.gitmodules` are protected by default. Embedded repositories and submodule entries are removed right after the attempt that made them. After any verifier changes the tree, the runner restores the candidate. The guarantee is stated as tree-level | A3, A9 |
+| B4 | ADV-04, 07, 22, 28, 30, 31, 33, 37 | **The workflow-file contract is closed.** One path-pattern matcher with stated semantics, and conservative cover and overlap tests. A frozen output is claimed through `writes`. Bare kinds are real type files. Relative paths resolve against the workflow file. Required parameters, unique persona codes, `fail_pattern` semantics, `outputs` ∩ `removes`, reserved dots in ids | D8, D10, A9, A10 |
+| B5 | ADV-05 | **Capability probes are judged by effects the runner observes**, never by tool events, which Claude Code's print mode does not emit. The capability check moves from `validate` to `doctor` and `start`. Host identity is defined | A5 |
+| B6 | ADV-06, 34 | **Every external effect has an intent and a reconciliation**, most by being idempotent; reverts are resumable. Process identity is pid, start ticks and boot id, on Linux. `prune` removes the refs of finished runs | A2 |
+| B7 | ADV-10, 11, 19, 23, 26, 27 | **Verifier behaviour is complete.** Standalone checks and human tasks have defined failure. Writing standalone checks are rolled back. New status `objected`; the skip closure follows `needs`, `reviews` and `verifies`. `read_only` is verified. `restores = true` for verifiers that change source and put it back. A panel that cannot answer leaves its producer `blocked`. `retry` respects an open transaction | A1, A9, D7 |
+| B8 | ADV-13, 17, 29 | **The record is protected by hashes, not file modes**: an integrity manifest over every decision-bearing file, the ledger included. `TASK_RUNNER_RUN_DIR` goes only to types that ask for it. Review rounds have invocation directories | A9, A6 |
+| B9 | ADV-14 | **`protected` is a union and cannot be narrowed.** Files a gate executes are protected by default | D8 |
+| B10 | ADV-15, 16 | **A budget stop and an escalation are pauses that hold the tree**, like a human approval. `resume --add-budget`. `resolve --as resolved, advisory or upheld` followed by `resume` continues acceptance with no repeated work | A1, A11, D15 |
+| B11 | ADV-18 | **Prompt assembly is specified**: one pass over the template, fenced data blocks, size caps with an overflow rule per placeholder; findings are never truncated | D4 |
+| B12 | ADV-20 | **The plan is corrected**: scenarios moved to the stage that can pass them, unowned scenarios and deliverables assigned, the scripted agent's contract written down | — |

@@ -1,6 +1,6 @@
 name = "design"
 kind = "produce"
-requires = ["read", "write", "resume"]        # capabilities the agent profile must be qualified for (doctor)
+requires = ["read", "write"]        # capabilities the agent profile must be qualified for (doctor)
 description = "Write or revise a design document"
 review_type = "design-review"
 

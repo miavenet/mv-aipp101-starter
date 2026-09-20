@@ -1,7 +1,8 @@
 # 02 — Concepts
 
 The whole model, in the order the pieces depend on each other. Decisions are cited as D1 to D16,
-and amendments made after the design review as A1 to A12, from the [decision log](00-decisions.md).
+amendments made after the design review as A1 to A12, and amendments made after the adversarial
+review as B1 to B12, all from the [decision log](00-decisions.md).
 
 ## Workflow, task, run
 
@@ -19,14 +20,23 @@ runs. A run works from its own frozen copy of the workflow (D11, D12).
 | `human` | Pauses until a person approves or rejects | A person | approve, or reject with a comment |
 
 `review`, `check` and `human` are the **verifiers**. A `check` or `human` task verifies a producer
-when it says `verifies = "<task>"`; otherwise it is a standalone step in the DAG.
+when it says `verifies = "<task>"`; otherwise it is a **standalone step** in the DAG (B7):
+
+- A standalone `check` that does not pass is `failed`. There is no author to send it back to, so it
+  is not retried on its own; `retry` re-runs it after the person has changed something.
+- A standalone `human` task that is rejected is `blocked`, and the note is kept in `decision.json`.
+- In both cases dependants are `skipped`, and the run ends with exit 2 or 255.
+- A standalone check that is not `read_only` is a writer, and gets the same protection as a
+  producer: a BASE snapshot before it, and afterwards the tree is returned to BASE and verified.
+  Whatever it builds belongs in ignored paths. A change it leaves in the snapshot fails the check.
 
 ## Types: templates over a kind (D4)
 
 A **type** is a file in the library: a kind, a prompt template, parameters, and defaults for agent,
 model, gates and limits. `design`, `implement`, `test`, `code-review`, `design-review` and
 `summarize` ship as a starter library. A task names a type and fills its parameters. Adding a type
-of work means adding a file.
+of work means adding a file. The bare kinds `produce` and `review` are themselves small type files
+in the library, so a one-off task goes through the same code path as any other (B4).
 
 ## Personas: the reviewer's perspective (D4)
 
@@ -51,6 +61,25 @@ A producer declares two path sets (A9):
 An output is normally required to exist and be non-empty. An entry written as
 `{ path = "pkg/__init__.py", may_be_empty = true }` lifts the second condition. Paths under `.git`
 or `.runs` are rejected in all three sets.
+
+**The repository must be able to see the work (B3).** Everything the runner guarantees rests on git
+tree snapshots, so the root must be a git repository, and:
+
+- A path in `outputs`, `writes` or `removes` that git ignores is refused, at `validate` and again
+  after every attempt (an agent may have edited an ignore file). An ignored output would pass the
+  existence check, be invisible to reviewers, and never be committed.
+- `.gitignore`, `.gitattributes` and `.gitmodules`, at any depth, are protected by default. A task
+  may change one only by listing that exact path in its `writes`.
+- After every attempt the candidate tree is scanned for **embedded repositories and submodule
+  entries** (mode 160000) and for changed paths whose parent has become a symbolic link. These are
+  treated like a change outside `writes`: the runner removes them while it still can, the attempt
+  does not pass, and the feedback names them. So a restore never meets a path it must refuse.
+- The guarantee is at **tree level**: two work trees are equal when git hashes them to the same
+  tree. With end-of-line or clean filters in `.gitattributes`, bytes that git normalises away are
+  outside the guarantee, exactly as they are outside a commit.
+
+Path patterns have one meaning everywhere; see
+[03, Path patterns](03-workflow-file.md#path-patterns-b4).
 
 After each attempt the runner writes a **manifest**: each declared output that exists, with its
 hash, mode and size, plus the id of the **candidate tree** (a git tree of the whole work tree) the
@@ -91,10 +120,23 @@ A producer must have at least one of steps 4 to 7, or the workflow is rejected w
 **Every result is bound to the exact candidate it judged (A9).** After step 3 the runner records the
 candidate tree id. Each gate, check, verdict and approval is stored with that id and a hash of the
 verifier's configuration. The runner takes a new snapshot after every verifier and before the
-commit. If the tracked source differs from the candidate, a gate or a check rewrote something: all
-earlier results are void, the attempt does not pass, and the feedback names the command and the
-files. Build products belong in paths the repository ignores; those are outside the snapshot, and
-outside the rollback guarantee.
+commit. The comparison is of the **whole snapshot**: tracked files and untracked files git does not
+ignore (B3). If it differs from the candidate, a gate or a check rewrote or littered something: the
+runner **puts the tree back to the candidate** by the restore mechanism, all earlier results are
+void, the attempt does not pass, and the feedback names the command and the files. Build products
+belong in paths the repository ignores; those are outside the snapshot, and outside the rollback
+guarantee. `check-gates` finds a littering gate before any money is spent.
+
+Two refinements (B7):
+
+- A check marked `restores = true` is one whose job is to change the source and put it back: a
+  mutation tester, a formatter dry run. The runner expects the tree to differ while it runs, and
+  afterwards restores the candidate itself instead of trusting the tool to have done so, even when
+  the tool crashed or was killed. A difference is then not a failure.
+- `read_only` on a check is a claim, and claims are verified. If the snapshot after a `read_only`
+  check differs, the **check** fails with "declared `read_only` but wrote: …", the reviews that ran
+  beside it are void and run again, no producer attempt is used, and that check is scheduled as a
+  writer for the rest of the run.
 
 When all verifiers pass on one unchanged candidate, the task is **accepted**: exactly that candidate
 is committed (D13) and its outputs are **frozen** (D8).
@@ -114,6 +156,12 @@ is committed (D13) and its outputs are **frozen** (D8).
   work that does not pass its checks.
 - Review: **the whole panel runs before anything goes back.** The author receives one list of all
   blocking findings (advisory ones are attached for information) and does one rework.
+- **What a rework prompt holds (B1).** Always two parts: (a) the immediate cause, which is the gate
+  output, the check output, the rejection note or the new findings; and (b) every open blocking
+  finding that has **no author response since it was last raised or kept open**. The author's
+  `responses` must cover exactly set (b), each once. A finding the author already answered `fixed`,
+  which no reviewer has judged yet because a gate failed in between, is listed for information and
+  needs no second answer. Responses are recorded against the attempt number.
 - Three counters are kept apart (A7, A6):
   - **Producer attempts.** A rework is a new attempt. `max_attempts` (default 3) counts attempts,
     whatever sent the work back. Attempt directories are numbered once and never reused, even after
@@ -126,9 +174,11 @@ is committed (D13) and its outputs are **frozen** (D8).
     call, not of the work: it uses no producer attempt and creates no finding.
 - When attempts run out, the task is `failed` if a gate or check sent it back last, and `blocked`
   (a person is needed, with the open findings listed) if review did.
-- The author's session is continued for a rework, so it keeps its understanding and the provider's
-  cache is reused. After an agent error, a timeout or an interruption the session is abandoned and
-  the next attempt starts clean.
+- The author's session is continued for a rework **when its profile is qualified for `resume`**, so
+  it keeps its understanding and the provider's cache is reused. Otherwise, and after an agent
+  error, a timeout or an interruption, the next attempt starts a new session with the full prompt
+  plus the feedback. `resume` is an optimisation, never a requirement (B1), and the rule for
+  `responses` is the same either way.
 - **No progress (A12):** the task fails early only when the gate fails the same way **and the
   candidate tree is identical to the previous attempt's**, meaning the author changed nothing that
   matters. The same failure text after a real change to the source is not "no progress"; the attempt
@@ -144,7 +194,11 @@ A finding is the unit of review feedback.
 | `title`, `detail` | What is wrong and why it matters |
 | `location` | File and line or section, where that applies |
 | `caused_by` | Later rounds only: the changed location that introduced the problem |
-| `status` | `open`, `resolved`, `disputed`, `escalated` |
+| `status` | Blocking: `open`, `resolved`, `disputed`, `escalated`, `superseded`. Advisory: `noted` |
+
+**Advisory findings never stay open (B1).** An advisory finding is recorded as `noted` at the end of
+the round that raised it. It is shown to the author for information, needs no response and no
+resolution, and no later round is asked about it.
 
 **The verdict is derived from the ledger, not taken from the model (A7).** After a reviewer's answer
 is applied, the runner computes whether any blocking finding of that reviewer is open. An old
@@ -152,8 +206,17 @@ finding left `unresolved` blocks even if the reviewer raised nothing new. The mo
 field must agree with the computed one, or the answer is invalid and is retried as a protocol error.
 
 **Round 1** is a full review of the whole candidate. **Later rounds judge the fix.** A reviewer who
-blocked is given its own open findings, the author's response to each, and the rework diff. It must
-mark each finding `resolved` or `unresolved`. It may raise a new blocking finding in two cases:
+blocked is given its own open **blocking** findings, the author's response to each, and the rework
+diff. It must mark each of those `resolved` or `unresolved`, each exactly once. A reviewer with no
+open blocking finding returns an empty `resolutions` list (B1).
+
+**The rework diff is per reviewer (B1).** For reviewer R it is the diff from the candidate R last
+saw to the current candidate. The ledger stores `last_seen_candidate` for each reviewer. If an
+attempt in between failed its gates and no panel ran, R's diff spans that attempt too, so nothing
+changed there escapes review. After `retry`, the work is a new line of work: every reviewer's next
+round is a round 1, and blocking findings still open from the old line are closed as `superseded`.
+
+A reviewer may raise a new blocking finding in two cases:
 
 1. its `location` lies inside the rework diff, or
 2. its `location` lies outside, and it names in `caused_by` a location that is inside the rework
@@ -167,6 +230,17 @@ The author answers each blocking finding with `fixed` or `disputed` and a note. 
 disputes and the reviewer keeps open becomes `escalated`: the task stops for a person, because two
 agents disagreeing is not something a third loop settles. A `caused_by` claim the author thinks is
 false is settled the same way.
+
+**An escalation is a human decision, so it holds the tree like one (B10).** The producer becomes
+`waiting_human` with its candidate still in place, and the run stops with exit 255. The person runs
+`resolve FINDING --as resolved | advisory | upheld` and then `resume`:
+
+- `resolved` or `advisory`: the finding no longer blocks. If the ledger now has no open blocker, the
+  runner checks the tree still equals the candidate, and acceptance continues from where it stopped.
+  Every earlier verifier result is bound to that same candidate, so none is repeated and no producer
+  attempt is used.
+- `upheld`: the person sides with the reviewer. The finding stays open and blocking, the author may
+  not dispute it again, and a rework follows if attempts remain.
 
 Each producer has one **findings ledger** in the run record, holding every finding from every
 reviewer and round, with its history. "What did review find, and was it fixed?" is answered by
@@ -186,8 +260,10 @@ so these are rejected at load, each with the dependency trace that shows the dea
 A `check` or `human` task that only `needs` an accepted task is a standalone step and is fine.
 
 Once accepted, a task's outputs are **frozen**: they join the protected set of every later task, and
-a change to them is reverted by the runner like any protected file. A later task B may change a
-frozen file of A only by **claiming** it in its own `writes`, and then (A10):
+a change to them is reverted by the runner like any protected file. `protected` sets are a **union**
+across built-in, workflow, type and task level: a task can add to the protected set and can never
+narrow it (B9). A later task B may change a
+frozen file of A only by **claiming** it in its own `writes` (not merely `outputs`; B4), and then (A10):
 
 - B must depend on A, directly or through other tasks. An overlapping claim between tasks with no
   order between them is rejected at load.
@@ -229,11 +305,17 @@ Given the same workflow and the same results from agents, the same things happen
 
 ## Failure (D9)
 A task ends unsuccessfully as **failed** (attempts used up on gates, no progress, a reviewer changed
-the tree, a verifier's calls kept failing at the protocol level) or **blocked** (the agent said it
-cannot do the task properly, a finding was escalated, or attempts ran out with blocking findings
-still open). An **environment failure** is a third thing (A5, A6): a sandbox that cannot start, a
+the tree) or **blocked** (the agent said it cannot do the task properly, a verifier's calls kept
+failing at the protocol level, or attempts ran out with blocking findings still open). An escalated
+finding is neither: it is a pause for a person, described under Findings. An **environment failure** is a third thing (A5, A6): a sandbox that cannot start, a
 missing binary, failed authentication. It stops the run at once with its cause and uses no attempt,
 because retrying the work cannot fix the machine.
+
+`failed` and `blocked` are statuses of any task. A verifier that did not pass its latest round is
+`objected`; a verifier whose producer ended before it could run is `skipped`. The skip closure
+follows `needs`, `reviews` and `verifies` together, so every task always has a status (B7). A panel
+whose members cannot produce a valid answer leaves its producer `blocked`, not `failed`: a person
+is needed to repair the panel.
 
 When a task fails or is blocked:
 
@@ -244,16 +326,25 @@ When a task fails or is blocked:
    files with their executable bit, symbolic links replaced as links and never written through, new
    files removed, parent paths checked so nothing outside the repository is touched. The runner then
    verifies by snapshot that the tree equals the accepted one. Only tracked and untracked-unignored
-   paths are covered; ignored build output is not.
+   paths are covered; ignored build output is not. Directories the restore emptied are removed, up
+   to but not including the root (B2). If a restore cannot be completed, that is an **environment
+   failure**: the run stops, prints the paths, and leaves the tree alone (B3).
 3. Every task downstream of it is marked `skipped`, with the reason.
 4. Independent branches continue.
 
 The run ends with exit 2 (failed) or 255 (a person is needed). `retry TASK` gives fresh attempts,
 either clean or with `--apply-patch`, which first checks that the patch's base is still the current
-accepted tree and refuses, with an explanation, if it is not.
+accepted tree and refuses, with an explanation, if it is not. While a producer transaction is open,
+`retry` is refused for any other task and says which task the run is waiting on (B7).
+
+**Running out of budget is a pause, not a failure (B10).** No new call starts, calls in flight
+finish, and the run stops as `stopped` with exit 2. If a producer is active, its transaction stays
+open and the expected tree is recorded, exactly as for a human pause. `resume --add-budget USD`
+raises the run budget, is recorded as an event, and the run continues where it stopped.
 
 ## Runs (D11, D12, D13)
-- `start` makes a run: a UUID, a directory, a branch `run/<workflow>-<uuid8>`, and a **frozen copy of
+- `start` makes a run: a UUID, a directory, a branch `run/<workflow>-<uuid8>` **which it checks
+  out** (B2), and a **frozen copy of
   everything that defines the work** (A10): the workflow, the library files it uses, the content of
   every `prompt_file`, and `root` resolved to an absolute path. Editing a brief on disk does not
   change a run.
@@ -269,7 +360,8 @@ accepted tree and refuses, with an explanation, if it is not.
   consumed its outputs), shows the list, and undoes those tasks' commits with **new revert commits**,
   newest first, so files a reopened task no longer produces do not linger. The branch is never
   reset. If a revert conflicts, the replan stops and changes nothing further.
-- Each accepted producer is one commit on the run branch. Merging the branch is the owner's call.
+- Each accepted producer is one commit on the run branch. The run branch stays checked out when the
+  run ends; going back to the original branch, and merging, are the owner's call.
 
 ## The record (D2, D14)
 

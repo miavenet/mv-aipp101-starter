@@ -23,7 +23,7 @@ protected = ["docs/spec/**", "tests/fixtures/**", "tools/**"]
 id = "design"
 type = "design"
 title = "Design the L2 order book"
-prompt_file = "briefs/book-design.md"
+prompt_file = "briefs/book-design.md"  # relative to this file, like `library`. Task paths are relative to `root`
 outputs = ["docs/design/05-order-book.md"]
 reviewers = ["principal-engineer", "spec-compliance"]
 
@@ -61,6 +61,7 @@ type = "check"
 title = "Every hand-picked mutant of the book is killed by some test"
 verifies = "implement"                 # a surviving mutant sends implement back to rework
 run = ["python3 tools/run_mutants.py book"]
+restores = true                        # it rewrites source and puts it back; the runner restores the candidate itself
 
 [[task]]
 id = "report"

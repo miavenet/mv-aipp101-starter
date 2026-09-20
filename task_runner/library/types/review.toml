@@ -1,0 +1,27 @@
+name = "review"
+kind = "review"
+requires = ["read"]        # capabilities the agent profile must be qualified for (doctor)
+description = "The bare review kind: a one-off review with no template of its own"
+
+prompt = """
+You are reviewing work made by another agent. You review from ONE perspective, described below.
+Do not modify any file.
+
+{persona}
+
+{task.prompt}
+
+# The work under review
+
+{target}
+
+{diff}
+
+{findings}
+
+# Rules
+
+{rules}
+
+{result_schema}
+"""

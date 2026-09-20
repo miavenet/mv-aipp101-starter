@@ -11,7 +11,7 @@ Status: **design only. No code exists here yet.** The build waits for the owner'
 
 | File | Contents |
 |---|---|
-| [`docs/00-decisions.md`](docs/00-decisions.md) | The sixteen decisions taken with the owner, each with its reason; the defaults assumed without asking; and the twelve amendments made after an independent design review |
+| [`docs/00-decisions.md`](docs/00-decisions.md) | The sixteen decisions taken with the owner, each with its reason; the defaults assumed without asking; the twelve amendments (A) made after an independent design review, and the twelve (B) made after an adversarial review |
 | [`docs/01-requirements.md`](docs/01-requirements.md) | What the runner must do, and what it will not do |
 | [`docs/02-concepts.md`](docs/02-concepts.md) | Kinds, types, personas, acceptance, rework, findings, runs. The model in full |
 | [`docs/03-workflow-file.md`](docs/03-workflow-file.md) | Reference for the workflow file, type files and persona files |

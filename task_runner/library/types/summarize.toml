@@ -2,6 +2,8 @@ name = "summarize"
 kind = "produce"
 requires = ["read", "write"]        # capabilities the agent profile must be qualified for (doctor)
 description = "Write a narrative summary of upstream work, from the run record"
+review_type = "design-review"
+needs_run_dir = true        # the only starter type given TASK_RUNNER_RUN_DIR. Treat the record as read-only
 
 prompt = """
 You are carrying out one task of a larger workflow, unattended.

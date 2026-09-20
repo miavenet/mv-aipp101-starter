@@ -23,6 +23,8 @@ itself. Deliverables live in the repository (D3); this is the record of how they
       library/                        frozen copies of the type and persona files this run uses
       briefs/                         frozen content of every prompt_file (A10)
       qualification.json              what doctor established for each agent profile, per capability (A5)
+      integrity.json                  hashes of the decision-bearing files, checked around every job (B8)
+      git-index                       the run's scratch index, reused so snapshots use git's stat cache (B2)
       replans/
         001/  before.toml  after.toml  changes.json  reverts.json
       tasks/
@@ -55,8 +57,10 @@ itself. Deliverables live in the repository (D3); this is the record of how they
           commit.json                 only when accepted: sha, files, message
         011-design.review.principal-engineer/
           task.json  STATUS.md  index.json
-          round-1/                    rounds line up with the producer's attempts
-            prompt.md  agent/  verdict.json
+          round-1/                    counted per reviewer: its first sight of a candidate (A7)
+            prompt.md
+            invocation-1/             as for a producer; invocation-2/ after a protocol retry (B8)
+            verdict.json              the validated answer, the candidate it judged, the diff base it was shown
           round-2/
         012-design.review.spec-compliance/
         020-implement/
@@ -69,24 +73,32 @@ itself. Deliverables live in the repository (D3); this is the record of how they
 
 1. **`state.json` is the only thing the engine reads back.** Everything else is written for readers.
    Deleting every `STATUS.md` and `index.json` loses nothing; `runner status --rebuild` regenerates them.
-2. **Write once.** An attempt, round or invocation directory is never modified after it is finished,
-   and it is made read-only when it is closed. A retry, a rework or a protocol retry makes a new
-   directory, with a number that is never reused. So the record of what happened cannot be rewritten
-   by what happened next.
+2. **Write once.** An attempt, round or invocation directory is never modified after it is finished.
+   A retry, a rework or a protocol retry makes a new directory, with a number that is never reused.
+   So the record of what happened cannot be rewritten by what happened next. This is enforced by
+   hashes (rule 4), **not by file modes** (B8): read-only directories would stop `status --rebuild`
+   from regenerating the `index.json` inside them, and would make `rm -rf` of an old run fail.
+   `STATUS.md` and `index.json` are derived files and are outside the write-once rule.
 3. **Durable state, and intents before effects (A2).** `state.json` is written to a temporary file,
    flushed and synced, renamed, and its directory synced. Before any external effect (an agent call,
    a commit, a restore, a revert) the state records the **intent** with a unique operation id; after
    it, the **outcome**. `resume` reconciles every intent that has no outcome. See
    [05, Crash recovery](05-architecture.md#crash-recovery-a2).
-4. **The record protects itself (A9).** `.runs/` is ignored by git, so work-tree snapshots cannot see
-   an agent tampering with it. The runner therefore hashes `state.json` before and after every agent
-   call and every command, and treats a change it did not make as a failure of that job.
+4. **The record protects itself (A9, B8).** `.runs/` is ignored by git, so work-tree snapshots cannot
+   see an agent tampering with it. The runner therefore keeps `integrity.json`: the hashes of every
+   **decision-bearing file**, which are `state.json`, every `findings.json`, and every `result.json`,
+   `verdict.json`, `verification.json`, `outputs.json` and `decision.json` in a finished directory.
+   It checks them before and after every agent call and every command, and treats a change it did
+   not make as a failure of that job. The ledger decides every verdict, so it is covered from the
+   first finding, not only once something is closed.
 5. **No secrets by intent.** The runner passes no credentials. Agent output is stored as the agent
    printed it, after the same redaction patterns the hook logger uses (tokens, keys, bearer headers).
 6. **Self-ignoring.** `.runs/.gitignore` holds `*`. Committing a run record is the owner's choice.
 7. **Linked to the hook log.** The run UUID and task id are exported to every agent call as
-   `TASK_RUNNER_RUN`, `TASK_RUNNER_TASK` and `TASK_RUNNER_RUN_DIR`, so the repository's hook logger ties each driven session
-   to its task, and its session scorecard can be found from the record.
+   `TASK_RUNNER_RUN` and `TASK_RUNNER_TASK`, so the repository's hook logger ties each driven
+   session to its task. `TASK_RUNNER_RUN_DIR` is exported **only to tasks whose type sets
+   `needs_run_dir = true`** (B8), which in the starter library is `summarize` alone. Gates and checks
+   never receive it.
 
 ## `run.json`
 
@@ -96,7 +108,9 @@ itself. Deliverables live in the repository (D3); this is the record of how they
   "workflow": "book-module",
   "workflow_sha256": "…",
   "root": "/workspace",
-  "branch": "run/book-module-1a2b3c4d",
+  "workflow_file": "/workspace/workflows/book-module.toml",   // resolved paths are recorded (B4)
+  "branch": "run/book-module-1a2b3c4d",      // with branch = "current": the branch that was checked out; none is created
+  "original_branch": "main",                 // what was checked out before `start` (B2)
   "base_commit": "61d0921",
   "started": "2026-09-19T20:15:00Z",
   "runner_version": "0.1.0",
@@ -123,10 +137,11 @@ itself. Deliverables live in the repository (D3); this is the record of how they
 | `verifying` | A producer's attempt is with its checks or reviewers |
 | `rework` | A producer is about to run another attempt |
 | `accepted` | Done: verified, and for a producer, committed and frozen. For a review, check or human task: passed |
-| `waiting_human` | Stopped for a person |
-| `blocked` | The agent said it cannot do this properly, or a finding was escalated |
-| `failed` | Attempts used up, no progress, no usable verdict, or a reviewer changed the tree |
-| `skipped` | An upstream task failed or is blocked |
+| `objected` | A verifier whose latest round did not pass. It runs again if its producer is reworked; it is final if the producer ends `blocked` or `failed` (B7) |
+| `waiting_human` | Stopped for a person: an approval, or an escalated finding (B10). The tree is held |
+| `blocked` | A person is needed: the agent said it cannot do this properly, attempts ran out with findings open, a panel cannot produce a valid answer, or a standalone `human` task was rejected |
+| `failed` | Attempts used up on gates, no progress, a reviewer changed the tree, or a standalone check did not pass |
+| `skipped` | It could not run: something it `needs` failed or is blocked, or the producer it `reviews` or `verifies` ended before it ran (B7) |
 
 ## Result schemas
 
@@ -140,7 +155,7 @@ every property required), which Codex needs and the others accept.
   "outcome": "done",                        // or "blocked"
   "summary": "What was made, in a few sentences. Shown to downstream tasks.",
   "blocked_reason": "",
-  "responses": [                            // on rework: one per blocking finding received
+  "responses": [                            // on rework: exactly the findings feedback.md lists as needing a response (B1)
     {"finding": "implement/PE-2", "action": "fixed", "note": "…"}   // or "disputed"
   ]
 }
@@ -155,7 +170,7 @@ every property required), which Codex needs and the others accept.
   "findings": [                             // new findings this round. caused_by: later rounds only (A7)
     {"severity": "blocking", "title": "…", "detail": "…", "location": "src/book/side.hpp:41", "caused_by": ""}
   ],
-  "resolutions": [                          // later rounds: one per open finding of this reviewer
+  "resolutions": [                          // later rounds: one per open BLOCKING finding of this reviewer; else empty (B1)
     {"finding": "implement/PE-2", "status": "resolved", "note": "…"}   // or "unresolved"
   ]
 }
@@ -176,15 +191,18 @@ An invalid answer is a protocol error and is retried; it never becomes a finding
 ```json
 {
   "producer": "implement",
+  "reviewers": {                             // the base of each reviewer's next rework diff (B1)
+    "implement.review.principal-engineer": {"round": 2, "last_seen_candidate": "f8d1c79…"}
+  },
   "findings": [
     {
       "id": "implement/PE-2", "reviewer": "implement.review.principal-engineer", "persona": "principal-engineer",
       "severity": "blocking", "title": "…", "detail": "…", "location": "src/book/side.hpp:41",
       "status": "resolved",
       "history": [
-        {"round": 1, "event": "raised"},
-        {"round": 2, "event": "author:fixed", "note": "…"},
-        {"round": 2, "event": "reviewer:resolved", "note": "…"}
+        {"round": 1, "attempt": 1, "event": "raised"},
+        {"attempt": 2, "event": "author:fixed", "note": "…"},      // author events carry the attempt only (B1)
+        {"round": 2, "attempt": 2, "event": "reviewer:resolved", "note": "…"}
       ]
     }
   ]
@@ -204,15 +222,18 @@ Spend: $3.12 known of $50.00, $0.00 reserved, plus 2 unpriced Codex calls (48k t
 | 010 | design | design | accepted | 2 | $0.84 | 3b098a6 |
 | 011 | design.review.principal-engineer | design-review | accepted | 2 rounds | $0.41 | |
 | 012 | design.review.spec-compliance | design-review | accepted | 1 round | $0.22 | |
-| 020 | implement | implement | blocked | 2 | $1.65 | |
-| 030 | signoff | human | skipped (upstream blocked) | | | |
+| 020 | implement | implement | waiting_human | 2 | $1.65 | |
+| 021 | implement.review.principal-engineer | code-review | accepted | 2 rounds | $0.52 | |
+| 022 | implement.review.spec-compliance | code-review | objected | 2 rounds | $0.47 | |
+| 030 | signoff | human | pending | | | |
 
 ## Needs attention
-- **implement** is blocked: finding implement/SC-1 is disputed by the author and kept open by spec-compliance.
-  See tasks/020-implement/findings.json. Its work is set aside in tasks/020-implement/failed.patch.
+- **implement** is waiting for a person: finding implement/SC-1 is disputed by the author and kept
+  open by spec-compliance. See tasks/020-implement/findings.json. The candidate is still in the work
+  tree, which the run is holding; do not edit it.
 
 ## Next
-    runner retry RUN implement --apply-patch      after settling implement/SC-1
+    runner resolve RUN implement/SC-1 --as resolved|advisory|upheld -m "why"
     runner resume RUN
 ```
 
@@ -230,7 +251,7 @@ Spend: $3.12 known of $50.00, $0.00 reserved, plus 2 unpriced Codex calls (48k t
     "changes.diff": "Everything this attempt changed in the repository",
     "outputs.json": "Manifest of the declared output files after this attempt",
     "gate.log": "Output of the gate commands",
-    "agent/": "Raw invocation and output of the agent process"
+    "invocation-1/": "Raw invocation and output of the agent process"
   }
 }
 ```

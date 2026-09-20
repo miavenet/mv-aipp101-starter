@@ -1,6 +1,6 @@
 name = "implement"
 kind = "produce"
-requires = ["read", "write", "execute", "resume"]        # capabilities the agent profile must be qualified for (doctor)
+requires = ["read", "write", "execute"]        # capabilities the agent profile must be qualified for (doctor)
 description = "Write or change code and its tests to satisfy a brief and an accepted design"
 review_type = "code-review"
 

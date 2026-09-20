@@ -239,11 +239,20 @@ class Validation(unittest.TestCase):
         self.assertTrue(validate.check_produce({"outcome": "done"}, []))                  # keys missing
         self.assertTrue(validate.check_produce(dict(done(), extra=1), []))                # no other key
         self.assertTrue(validate.check_produce(dict(done(), outcome="finished"), []))
-        self.assertTrue(validate.check_produce(done(summary="s" * 2001), []))
-        self.assertEqual(validate.check_produce(done(summary="s" * 2000), []), [])
+        self.assertTrue(validate.check_produce(done(summary="s" * (validate.SUMMARY_MAX + 1)), []))
+        self.assertEqual(validate.check_produce(done(summary="s" * validate.SUMMARY_MAX), []), [])
         self.assertTrue(validate.check_produce("done", []))
         blocked = {"outcome": "blocked", "summary": "", "blocked_reason": "", "responses": []}
         self.assertIn("blocked_reason", " ".join(validate.check_produce(blocked, [])))
+
+    def test_summary_headroom_for_both_result_kinds(self):
+        for schema, answer in [(validate.PRODUCE, done()),
+                               (validate.REVIEW, dict(verdict='pass', summary='', findings=[], resolutions=[]))]:
+            for length in (2062, 2167, validate.SUMMARY_MAX):
+                with self.subTest(kind=schema['required'][0], length=length):
+                    self.assertEqual(validate.check_shape(dict(answer, summary='s' * length), schema), [])
+            self.assertTrue(validate.check_shape(
+                dict(answer, summary='s' * (validate.SUMMARY_MAX + 1)), schema))
 
     def test_responses_answer_each_finding_once(self):
         fixed = {"finding": "make/PE-1", "action": "fixed", "note": "done"}

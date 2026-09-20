@@ -69,6 +69,10 @@ def rules_text(protected, frozen, writes=None):
 def result_schema_text(kind):
     return ("# Your answer\n\nEnd your reply with exactly one JSON object of this shape, and "
             "nothing after it. Every key is required; no other key is allowed.\n\n"
+            "Aim for a summary of at most 1200 characters, comfortably below the schema's hard limit. "
+            "Summarize outcome, verification and remaining work; put per-finding details in "
+            "responses/findings/resolutions and longer evidence in task artifacts. "
+            "Do not repeat those details in summary.\n\n"
             + json.dumps(validate.SCHEMAS[kind], indent=2))
 
 

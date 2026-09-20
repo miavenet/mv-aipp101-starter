@@ -150,3 +150,45 @@ more useful than telling agents merely to satisfy the maximum. Keep detailed res
 in their dedicated fields and artifacts. This remains a proposed prompt improvement.
 Known spend at observation: $51.64 / $100 plus three calls with unknown usage; 116
 minutes of recorded agent time. No preparation producer accepted yet.
+
+### Tuning decision — 2026-09-20, after candidate 8 entered review
+
+Evidence supports two separate changes; neither replaces correctness review.
+
+- **Summary headroom (implemented on main):** increase the hard cap from 2,000 to 4,000
+  characters for producer and reviewer summaries; prompt for a normal target of 1,200.
+  The observed 2,062/2,167-character failures fit the new cap; the earlier 6,216-character
+  response still does not. Dedicated response/finding fields hold the detailed evidence.
+  Do not silently truncate. Existing input-context caps still apply.
+- **Task scope:** the current contract is 1,641 lines / 123,195 bytes, spanning many
+  independently reviewable concerns. The first split removed other deliverables but did
+  not sufficiently bound the contract's semantic scope. Eight attempts are not eight
+  independent design failures: interruption and response-protocol retries also occurred.
+- **Keep other limits:** no evidence yet justifies larger per-call budgets, longer
+  timeouts, more retries or weaker acceptance. Raising them could hide repeated work.
+- **Rollout:** the active process retains its loaded code and schemas. Do not change its
+  in-flight request or restart a valid review to adopt the new cap. Use the new runner
+  at the next safe process boundary; record its version. This is not a hot reload.
+
+Before dispatching remaining preparation work, apply the following decomposition in a
+supported replan at a settled boundary. These are proposed task boundaries, not yet
+changes to the frozen running workflow:
+
+| Current broad task | Smaller independently reviewable deliverables |
+| --- | --- |
+| scenarios | framing/decoder cases; arbiter/reset/gap cases; book/event cases; replay/config/output cases; then cross-module scenario-index consistency |
+| briefs-foundation | build/core seams; decoder fixtures and tests; decoder implementation; capture reader/encoder boundaries |
+| briefs-state | independent reference model; order-book behavior and properties; arbiter behavior and properties |
+| briefs-integration | handler composition; CLI/config/output; end-to-end goldens; fuzz/resource/mutation evidence |
+
+Each slice needs explicit inputs, owned outputs, acceptance scenarios and a narrow review
+question. Keep causally coupled invariants together (e.g. clear mutation and immediate
+callback visibility). Separate independent modules rather than splitting by word count.
+Use a final cross-module review to catch interface contradictions; smaller tasks alone
+cannot prove integration correctness. Avoid duplicating scenario text across task files.
+The task catalog should be split by domain if it too grows beyond a useful single pass.
+
+If the current contract review finds further substantial defects, assess their shared
+cause and revise scope before another broad rewrite. Do not discard the current draft
+or automatically rebuild all contracts. Compare subsequent protocol-retry counts, time
+to accepted slice, review findings and spending to assess whether tuning actually helped.

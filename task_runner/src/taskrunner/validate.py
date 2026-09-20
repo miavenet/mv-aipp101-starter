@@ -5,7 +5,7 @@ claim to implement JSON Schema. A provider's schema feature makes valid answers 
 the check, whichever agent produced the answer.
 """
 
-SUMMARY_MAX = 2000
+SUMMARY_MAX = 4000
 
 RESPONSE = {"type": "object", "additionalProperties": False,
             "required": ["finding", "action", "note"],

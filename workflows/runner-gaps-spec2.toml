@@ -1,0 +1,54 @@
+# Narrowed spec phase (owner's decision, 2026-09-20): finish the G1 and G2 designs only.
+# Both documents exist as drafts from the retired run runner-gaps-spec-b560c1ff; each task
+# REVISES its draft against the Codex Astra findings recorded beside the brief.
+# G3 is reduced to a doctor message plus documentation and goes straight to implementation;
+# G4 is deferred; G5 is solved on the project side.
+# Run from this worktree with the main checkout's runner:
+#   /workspace/task_runner/runner --runs-dir runs <command> workflows/runner-gaps-spec2.toml
+
+name = "runner-gaps-spec2"
+root = ".."
+library = ["../task_runner/library"]
+
+[defaults]
+agent = "claude"
+complexity = "high"
+max_attempts = 5
+timeout_min = 40
+budget_usd = 8.0
+run_budget_usd = 30.0
+protected = ["task_runner/src/**", "task_runner/tests/**", "task_runner/library/**", "task_runner/docs/0*", "task_runner/docs/runbook.md", "task_runner/docs/tutorial/**", "workflows/**"]
+
+[model_policy.high]
+claude = "claude-opus-5"
+codex = "gpt-6-astra"
+
+[agents.astra-review]
+kind = "codex"
+sandbox = "read-only"
+ignore_user_config = true
+extra_args = ["--enable", "use_legacy_landlock", "-c", 'model_reasoning_effort="high"']
+
+[[task]]
+id = "g1"
+type = "design"
+title = "Spec G1: recover set-aside work after a replan (revise the draft)"
+prompt = """Revise, do not rewrite, the existing draft task_runner/docs/design/runner-gaps/G1-recover-set-aside-work.md. The brief it answers is the G1 section, the Output section and the closing constraints of workflows/runner-gaps/spec-brief.md. A first review round by two reviewers produced the findings in workflows/runner-gaps/findings-g1.md: resolve every blocking one in the document, and the advisory ones where that is cheap. Keep what the findings do not touch. Prefer removing or simplifying mechanism over adding more: every paragraph you add is new surface for the next review, and a smaller design that meets the requirements is the better design. When a finding asks for an old-state read path or a crash point, state it in one or two sentences where the mechanism is defined rather than in a new section. In your summary, list each finding id or title with one line on how it was resolved."""
+outputs = ["task_runner/docs/design/runner-gaps/G1-recover-set-aside-work.md"]
+gate = ["workflows/runner-gaps/check_spec.sh task_runner/docs/design/runner-gaps/G1-recover-set-aside-work.md"]
+reviewers = [
+  { perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+  { perspective = "spec-compliance", agent = "astra-review", model = "gpt-6-astra", advisory = true, fallback_agents = ["claude"] },
+]
+
+[[task]]
+id = "g2"
+type = "design"
+title = "Spec G2: keep sound reviews (revise the draft)"
+prompt = """Revise, do not rewrite, the existing draft task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md. The brief it answers is the G2 section, the Output section and the closing constraints of workflows/runner-gaps/spec-brief.md. The draft went through three review rounds; what is still open is in workflows/runner-gaps/findings-g2.md. Resolve the blocking findings (both are the same issue: a run saved by today's runner at panel:outcomes-recorded has no `invocation` field on its persisted job, and resume replays that outcome before dispatching anything, so the new rejection path needs a read path for that old state) and the advisory ones about scenario RUN-22 and the overflow guidance. Touch nothing else: the rest of the document has been reviewed three times. Prefer the smallest change that closes each finding. In your summary, list each finding id with one line on how it was resolved."""
+outputs = ["task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md"]
+gate = ["workflows/runner-gaps/check_spec.sh task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md"]
+reviewers = [
+  { perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", fallback_agents = ["claude"] },
+  { perspective = "spec-compliance", agent = "astra-review", model = "gpt-6-astra", advisory = true, fallback_agents = ["claude"] },
+]

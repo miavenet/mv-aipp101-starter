@@ -357,7 +357,10 @@ def cmd_status(args):
         run = record.Run.load(record.resolve_run(_runs_dir(args.where), args.run))
     except record.RecordError as exc:
         return fail(str(exc))
-    if args.rebuild or not os.path.exists(os.path.join(run.path, "STATUS.md")):
+    # A finished run has no runner writing its record, and what became of its branch changes
+    # outside the runner (a merge, a push), so its derived files are refreshed on every look.
+    finished = run.state["status"] in record.FINISHED_STATUSES
+    if args.rebuild or finished or not os.path.exists(os.path.join(run.path, "STATUS.md")):
         run.regenerate()
     with open(os.path.join(run.path, "STATUS.md"), encoding="utf-8") as fh:
         sys.stdout.write(fh.read())

@@ -659,13 +659,16 @@ class Run:
 
     def regenerate(self):
         """STATUS.md for the run and each task, then index.json in every directory. Pure functions
-        of the state and of what is on disk, so rebuilding gives the same bytes."""
+        of the state and of what is on disk, so rebuilding gives the same bytes. One line is
+        observed from git instead: where a finished run's branch went. A merge happens outside
+        the runner, so `runner status` regenerates a finished run to keep that line true."""
         info = self.info
         # run.json: the identity never changes; the totals are copied from the state.
         info.update(status=self.state["status"], spend=self.state["spend"],
                     seconds=self.state["seconds"], run_budget_usd=self.state["run_budget_usd"])
         self._write(os.path.join(self.path, "run.json"), dump_json(info).decode("utf-8"))
-        self._write(os.path.join(self.path, "STATUS.md"), render_run_status(info, self.state))
+        self._write(os.path.join(self.path, "STATUS.md"),
+                    render_run_status(info, self.state, branch_disposition(info, self.state)))
         for task_id in self.state["order"]:
             tdir = self.task_dir(task_id)
             ledger = self.state["tasks"][task_id].get("ledger")
@@ -837,7 +840,39 @@ def _money(x):
     return f"${x:.2f}"
 
 
-def render_run_status(info, state):
+def branch_disposition(info, state):
+    """For a finished run on its own branch: is its last accepted commit in the branch it came
+    from, and in that branch's upstream? None when there is nothing to say or git cannot tell.
+    Observed, never decided: nothing in the engine reads it."""
+    if state["status"] != "done" or info.get("branch_mode") == "current":
+        return None
+    commits = [state["tasks"][t].get("commit") for t in state["order"]]
+    commits = [c for c in commits if c]
+    target = info.get("original_branch")
+    if not commits or not target:
+        return None
+    try:
+        git = gitops.Git(info["git_toplevel"])
+    except gitops.GitError:
+        return None
+    last = commits[-1]
+
+    def contains(ref):
+        if git.run("rev-parse", "--verify", "--quiet", ref + "^{commit}", check=False).returncode:
+            return None
+        return git.run("merge-base", "--is-ancestor", last, ref, check=False).returncode == 0
+
+    merged = contains("refs/heads/" + target)
+    if merged is None:
+        return None
+    res = git.run("rev-parse", "--abbrev-ref", "--symbolic-full-name", target + "@{upstream}",
+                  check=False)
+    upstream = res.stdout.decode("utf-8", "replace").strip() if res.returncode == 0 else ""
+    return {"commit": last, "target": target, "merged": merged, "upstream": upstream or None,
+            "pushed": contains("refs/remotes/" + upstream) if merged and upstream else None}
+
+
+def render_run_status(info, state, disposition=None):
     spend = state["spend"]
     unpriced = spend["unpriced"]
     lines = [f"# {info['workflow']} — run {info['run_id'][:8]} — "
@@ -886,7 +921,22 @@ def render_run_status(info, state):
         lines += ["", "## Needs attention"] + attention
     lines += ["", "## Next"]
     if state["status"] == "done":
-        lines.append("    Inspect the branch; merging it is your call.")
+        d = disposition
+        if d and d["merged"]:
+            where = f"`{d['target']}`"
+            if d["pushed"]:
+                where += f" and in `{d['upstream']}` (as last fetched)"
+            elif d["upstream"]:
+                where += f"; `{d['upstream']}` does not have it yet: push `{d['target']}`"
+            lines.append(f"    Merged: the last accepted commit {d['commit'][:7]} is in {where}.")
+            lines.append(f"    Nothing is left to do. The branch {info['branch']} can be deleted; "
+                         "`runner prune` removes this run's pinned refs.")
+        elif d:
+            lines.append(f"    Not merged: `{d['target']}` does not contain the last accepted "
+                         f"commit {d['commit'][:7]}.")
+            lines.append("    Inspect the branch; merging it is your call.")
+        else:
+            lines.append("    Inspect the branch; merging it is your call.")
     else:
         for task_id in state["order"]:
             t = state["tasks"][task_id]

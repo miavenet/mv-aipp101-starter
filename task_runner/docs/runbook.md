@@ -106,6 +106,11 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
 
 - The run branch stays checked out. Going back to your branch and merging are your call; the runner
   never pushes or merges.
+- `STATUS.md` is written by the runner when its own state changes, and a merge is not one of those
+  changes. `runner status RUN` therefore refreshes a **finished** run every time it is asked, and
+  the "Next" section then says whether the last accepted commit is in the branch the run came from
+  and in that branch's upstream (as last fetched). Opening the file without running `status` shows
+  it as of the last refresh.
 - `runner runs WORKFLOW` lists runs with status, cost and date.
 - To delete a run: remove its directory, then `runner prune` to delete its pinned refs under
   `refs/task-runner/`.

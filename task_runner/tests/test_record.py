@@ -83,6 +83,41 @@ class RunCase(RepoCase):
         return out
 
 
+class BranchDisposition(RunCase):
+    """rec: STATUS.md of a finished run says where its branch went, observed from git"""
+
+    def finish(self):
+        self.write("docs/d.md", "the design\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "design")
+        self.run_.state["tasks"]["design"]["commit"] = self.g.head()
+        for t in self.run_.state["tasks"].values():
+            t["status"] = "accepted"
+        self.run_.state["status"] = "done"
+        self.run_.save()
+        self.run_.regenerate()
+
+    def status(self):
+        with open(os.path.join(self.run_.path, "STATUS.md")) as fh:
+            return fh.read()
+
+    def test_unmerged_then_merged(self):
+        self.finish()
+        self.assertIn("Not merged: `main` does not contain", self.status())
+        self.assertIn("merging it is your call", self.status())
+        git(self.root, "checkout", "-q", "main")
+        git(self.root, "merge", "-q", "--ff-only", "run/demo-test")
+        self.assertIn("Not merged", self.status())               # nothing regenerated it yet
+        self.reload().regenerate()
+        self.assertIn("Merged: the last accepted commit", self.status())
+        self.assertIn("is in `main`.", self.status())             # no upstream: no push remark
+        self.assertNotIn("your call", self.status())
+
+    def test_an_unfinished_run_says_nothing_about_merging(self):
+        self.run_.regenerate()
+        self.assertNotIn("erged", self.status())
+
+
 class Creation(RunCase):
     def test_layout(self):
         p = self.run_.path

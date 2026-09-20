@@ -154,7 +154,7 @@ AgentResult: status, text, structured, session_id, cost_usd | None, usage, error
 | Continue a session | `--resume ID` | `exec resume ID`, never `--last` | not supported |
 | Money limit | `--max-budget-usd` | none. Usage is reported at the end of a turn only | none |
 | Unattended | `--permission-mode auto --permission-prompts none` | `-c approval_policy="never"` `-c sandbox_mode="workspace-write"` | its own |
-| Read-only | edit tools disallowed, plus the snapshot check | `sandbox_mode="read-only"` | `read_only_args` |
+| Read-only | read/search tools only, no shell or MCP tools, plus the snapshot check | `sandbox_mode="read-only"` | `read_only_args` |
 | Proper completion | exit 0 and a `result` object that is not an error | exit 0 **and** a `turn.completed` event for this invocation | exit 0 |
 | Tool events in the output | **none**: print mode with JSON output is one result object | yes: `command_execution` items | none |
 

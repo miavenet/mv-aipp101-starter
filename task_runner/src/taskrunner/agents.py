@@ -315,7 +315,10 @@ class ClaudeAgent(HeadlessAgent):
         if session_id:
             argv += ["--resume", session_id]
         if read_only:
-            argv += ["--disallowedTools", "Edit,Write,NotebookEdit"]
+            # Disabling Edit/Write alone leaves shell and delegated writes available. Reviewers
+            # get only local read/search tools and no MCP servers, then doctor verifies the boundary.
+            argv += ["--tools", "Read,Glob,Grep", "--disallowedTools", "Bash,Edit,Write,NotebookEdit,Agent",
+                     "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
         return argv
 
     def interpret(self, res):

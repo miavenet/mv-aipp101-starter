@@ -73,7 +73,8 @@ def fingerprint(profile, model, read_only, root):
             config_hashes[str(path)] = record.sha256_file(path)
     metadata = {'cache_version': CACHE_VERSION, 'profile': profile, 'model': model,
                 'read_only': read_only, 'host': host_identity(), 'version': version, 'root': os.path.abspath(root),
-                'binaries': files, 'config_hashes': config_hashes, 'capabilities': list(CAPABILITIES)}
+                'binaries': files, 'config_hashes': config_hashes, 'capabilities': list(CAPABILITIES),
+                'adapter_sha256': record.sha256_file(agents.__file__)}
     key = hashlib.sha256(record.dump_json(metadata)).hexdigest()
     return key, metadata
 

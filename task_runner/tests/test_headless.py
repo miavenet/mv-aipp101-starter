@@ -27,6 +27,12 @@ class Headless(unittest.TestCase):
             self.assertIn(word, argv)
         self.assertNotIn("--dangerously-skip-permissions", argv)
         self.assertNotIn("--setting-sources", argv)
+        self.assertEqual(argv[argv.index("--tools") + 1], "Read,Glob,Grep")
+        self.assertEqual(argv[argv.index("--mcp-config") + 1], '{"mcpServers":{}}')
+        self.assertIn("--strict-mcp-config", argv)
+        writer = a.build_argv(self.root, validate.PRODUCE, None, "chosen-model", 2.5, False)
+        self.assertNotIn("--tools", writer)
+        self.assertNotIn("--disallowedTools", writer)
 
     def test_codex_command_lines(self):
         a = agents.make("writer", {"kind": "codex"})

@@ -98,3 +98,8 @@ flowchart TB
 | What was verified against which candidate? | `…/attempt-N/verification.json` |
 | What did it cost? | `run.json`: known, reserved and unpriced spend |
 | Everything, in order | `<run>/events.jsonl` |
+
+## Field experience
+
+See [NYSE execution lessons](nyse-execution-lessons.md) for observed failures, recovery
+evidence, shipped fixes and proposed resilience regression scenarios.

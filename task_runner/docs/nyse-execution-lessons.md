@@ -192,3 +192,21 @@ If the current contract review finds further substantial defects, assess their s
 cause and revise scope before another broad rewrite. Do not discard the current draft
 or automatically rebuild all contracts. Compare subsequent protocol-retry counts, time
 to accepted slice, review findings and spending to assess whether tuning actually helped.
+
+### NYSE-R07 — provider session limit consumed task attempts
+
+2026-09-20: contracts and both reviewers accepted; candidate committed as `3f7337b`.
+Scenarios then authored files but failed after three attempts. Hooks at 15:06:38 UTC
+reported a Claude session limit, with reset text `11:50am (America/New_York)`.
+Two immediate invocations encountered the same limit. The runner classified the task
+as failed after exhausting attempts; this was not three substantive scenario failures.
+Known spending is $65.88 plus six calls with unknown usage.
+
+Evidence: `tasks/020-scenarios/` invocation outputs and activity, run STATUS.md.
+Provider reset text is a reported estimate, not verified account availability. Useful
+scenario edits must be recovered from the retained candidate/failed patch, not recreated.
+Follow-up: recognize provider quota exhaustion separately from author failure, preserve
+candidate and attempt allowance, and wait for explicit retry or a bounded reset policy.
+Test: a quota response causes no immediate identical retries, no acceptance, no lost
+artifact, and clearly identified provider-blocked status; unknown cost stays unknown.
+Do not silently switch provider or permission profile as a quota workaround.

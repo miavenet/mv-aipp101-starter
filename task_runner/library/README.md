@@ -14,6 +14,10 @@ with the same name replaces the one here.
 | `design-review` | review | One perspective on a design |
 | `code-review` | review | One perspective on a code change. Always checks for weakened tests and out-of-brief changes |
 
+Each type lists the **capabilities** its agent must be qualified for (`requires`): authors need
+`write`, reviewers need `read`. `doctor` establishes them per agent profile, and a workflow that
+asks for more than a profile has is refused before any work starts.
+
 `check` and `human` need no type file: a task names the kind directly.
 
 | Personas | Code | Blocks by default |

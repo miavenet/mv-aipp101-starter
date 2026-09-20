@@ -30,10 +30,32 @@ The owner can overrule any of these.
 |---|---|
 | Settings precedence | task, then persona, then type, then workflow `[defaults]`, then built-in |
 | Reviewer's agent | The same agent as the author, in a new read-only session. A persona or a task can name another |
-| Rework limit | `max_attempts = 3` executions of a producer, whatever sent it back |
+| Rework limit | `max_attempts = 3` executions of a producer, whatever sent it back. Protocol retries (2 per call) are counted apart (A6) |
 | Passed reviewers after rework | Re-run on the rework diff only (`recheck_passed = "diff"`); `"never"` is allowed |
 | Limits | Per call: `timeout_min` 30, `budget_usd` 5. Per run: `run_budget_usd` 50. `gate_timeout_min` 20. `max_parallel` 4 |
 | Agents | Claude Code, Codex, and any command, as designed in the research |
-| Codex in this container | Reviewer only. Its sandbox needs user namespaces, which the container lacks. Turning a sandbox off is a person's per-workflow choice |
+| Codex in this container | **Withdrawn, see A5.** "Reviewer only" was never established: the recorded Codex reviews read no files. Roles follow what `doctor` qualifies |
 | Run records in git | `.runs/` ignores itself. Committing a run record is the owner's choice |
 | Language | Python 3.11+, standard library only |
+
+## Amendments after the design review (2026-09-19)
+
+An independent review of this design ([review](../../reviews/task-runner-review.md),
+[Codex companion](../../reviews/task-runner-codex-headless.md)) found twelve defects. All twelve were
+confirmed. The full reply, including where a different remedy was chosen and why, is in
+[the response](../../reviews/task-runner-review-response.md).
+
+| # | Review | Amendment | Refines |
+|---|---|---|---|
+| A1 | P1-01 | **A producer owns the work tree for its whole life cycle**: produce, gates, checks, panel, human decision, commit or set-aside. Nothing else is scheduled meanwhile. A pending human verification holds the tree and stops the run | D6, D9 |
+| A2 | P1-02 | **Intent, effect, outcome** for every external effect, with operation ids in commit trailers; reconciliation on resume; process identity by group id and start time; attempt numbers never reused; synced state; snapshots pinned under private refs | D11 |
+| A3 | P1-03 | **Restore by git type and mode**, never by writing bytes; links replaced and never followed; parents checked; submodules refused; recovery uses the pinned tree and a full binary patch, never the capped review diff. No prototype code is carried over unchanged | D9 |
+| A4 | P1-04 | **No dirty starts.** `allow_dirty` is removed. `resume` detects branch, index or tree changes made while paused | D13 |
+| A5 | P1-05 | **Capabilities, not a greeting**: `doctor` qualifies `answer`, `read`, `execute`, `write`, `resume`, `boundary` per agent profile; types state what they need; text-only review is a separate, explicit, labelled mode. The "Codex: reviewer only" default is withdrawn | — |
+| A6 | P1-06 | **A result needs a normal exit, a terminal event of this invocation, a final answer of this invocation, and the runner's own validation** of shape and meaning. Invalid answers get bounded protocol retries, never findings or rework. Environment failures stop the run without using attempts | D7 |
+| A7 | P1-07 | **Attempts and review rounds are counted apart**; a reviewer's first sight is always a full review. **Verdicts are derived from the ledger.** Finding ids are unique in the run (`implement/PE-2`). A later-round blocker outside the diff stands if it names a changed location in `caused_by`, which the runner checks | D15 |
+| A8 | P1-08 | **Candidate and accepted milestones** per producer; `needs` targets accepted, `reviews` and `verifies` target the candidate; cycles are detected in that expanded graph, with a trace | D7, D8 |
+| A9 | P1-09 | **`writes` (allowlist, default `outputs`) and `removes`**; `may_be_empty` outputs; control directories refused; **every verification bound to the candidate tree and config hash**, with a snapshot after each verifier and before commit; the record's integrity checked around every job | D3, D7 |
+| A10 | P1-10 | **Input manifests** per accepted task; overlapping writers must be dependency-ordered; a claiming task re-runs the gates of accepted work it touched; review-only consumers are marked stale; `--reopen` computes the affected closure and undoes it with revert commits; prompt files and `root` are frozen at start | D8, D12 |
+| A11 | P2-11 | **Budget by reservation** before dispatch; spend reported as known, reserved and unpriced; no dollar promise for agents that report no cost; the `max_tokens` idea is dropped because usage arrives only when a turn ends; logs streamed to disk | defaults |
+| A12 | P2-12 | **Gates are invariants unless marked `new`**; `check-gates` reports pass, fail or error and only objects where a `new` gate does not fail for the right reason. **No-progress needs the same failure and the same candidate tree** | D7 |

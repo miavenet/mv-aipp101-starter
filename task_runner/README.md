@@ -11,7 +11,7 @@ Status: **design only. No code exists here yet.** The build waits for the owner'
 
 | File | Contents |
 |---|---|
-| [`docs/00-decisions.md`](docs/00-decisions.md) | The sixteen decisions taken with the owner, each with its reason, and the defaults assumed without asking |
+| [`docs/00-decisions.md`](docs/00-decisions.md) | The sixteen decisions taken with the owner, each with its reason; the defaults assumed without asking; and the twelve amendments made after an independent design review |
 | [`docs/01-requirements.md`](docs/01-requirements.md) | What the runner must do, and what it will not do |
 | [`docs/02-concepts.md`](docs/02-concepts.md) | Kinds, types, personas, acceptance, rework, findings, runs. The model in full |
 | [`docs/03-workflow-file.md`](docs/03-workflow-file.md) | Reference for the workflow file, type files and persona files |
@@ -31,7 +31,8 @@ Status: **design only. No code exists here yet.** The build waits for the owner'
 3. A review panel of **personas** (principal engineer, spec compliance, DevOps, …) reviews the same
    work in parallel. Blocking findings go back to the author once, consolidated, for bounded rework.
 4. Downstream tasks start only when upstream work is **accepted**. Accepted work is committed and
-   frozen.
+   frozen. A producer owns the work tree from its first edit until it is committed or set aside, and
+   exactly the candidate that was verified is what gets committed.
 5. Every run has a UUID and a directory laid out like a build directory, which explains itself to
    any person or agent who opens it later.
 

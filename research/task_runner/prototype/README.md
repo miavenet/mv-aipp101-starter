@@ -19,6 +19,21 @@ python3 research/task_runner/prototype/runner.py retry plan.toml TASK   # new at
 Exit codes: 0 all done, 1 more work (`next` only), 2 error or failed task, 255 a person is needed.
 [`example-plan.toml`](example-plan.toml) shows every setting with its default.
 
+## Known defects, found by design review
+
+An independent review (`reviews/task-runner-review.md`) found these, and reading the code confirms
+each one. They are **left as they are**, because this is evidence and not a product. No code from
+here is to be copied into the real build.
+
+| Where | Defect |
+|---|---|
+| `gitops.restore()` | Writes blob bytes with `open(path, "wb")`: it follows symbolic links and overwrites their targets, and it does not restore executable bits or link types |
+| `gitops.commit()` | `git add` and `git commit` by path take the owner's own uncommitted edits in the same file |
+| `gitops.diff()` | Capped at 60,000 characters and not binary-safe, so it is no recovery format |
+| `agents.Codex.parse()` | Reports success on exit 0 with no `turn.completed` event, and reads whatever final-message file is present, even one from an earlier call |
+| `agents.run_process()` | Buffers all output until exit: a runner crash loses it, and a chatty command uses unbounded memory |
+| The live run | Both Codex reviews contain no tool events. They judged the diff in the prompt and never read the repository, so "Codex works as a reviewer here" was not shown |
+
 ## What happens to each task
 
 ```

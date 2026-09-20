@@ -22,11 +22,11 @@ max_parallel = 4
 recheck_passed = "diff"         # after rework, reviewers who passed see the rework diff: "diff" | "never"
 branch = "run"                  # "run": a branch per run. "current": commit on the checked-out branch
 commit_trailer = ""
-allow_dirty = false             # true: start even with uncommitted changes; only task-changed paths are ever touched
 protected = ["docs/spec/**"]    # never changeable by any task in this workflow
 
-[agents.codex]                  # optional settings per agent
+[agents.codex]                  # a named profile per agent. Its non-secret settings and their hash are recorded in the run
 sandbox = "workspace-write"
+# review_mode = "provided_context"   # only for a reviewer qualified for text-only review; see 05, Capabilities
 
 [[task]]
 id = "design"
@@ -59,8 +59,10 @@ needs = ["implement"]
 | `title` | all | Shown in status, and the commit subject for a producer. Default: the id |
 | `prompt`, `prompt_file` | produce, review | The brief. A type's template wraps it |
 | `needs` | all | Task ids that must be **accepted** first |
-| `outputs` | produce | Required. Paths or globs of the deliverables |
-| `gate` | produce | Commands that must exit 0 after each attempt |
+| `outputs` | produce | Required. Paths or globs of the deliverables. An entry may be a table: `{ path = "pkg/__init__.py", may_be_empty = true }` |
+| `writes` | produce | Every path the task may change, helpers included. Default: the same as `outputs`. A change outside it is reverted and the attempt does not pass |
+| `removes` | produce | Paths that must not exist afterwards |
+| `gate` | produce | Commands that must exit 0 after each attempt. An entry may be a table: `{ run = "ctest -R book", new = true, fail_pattern = "BOOK-" }`, see below |
 | `reviewers` | produce | Panel shorthand, see below |
 | `reviews` | review | The producer under review. Set automatically for panel members |
 | `perspective` | review | A persona name |
@@ -70,6 +72,18 @@ needs = ["implement"]
 | `read_only` | check | `true`: the commands write nothing, so the check may run in parallel with readers |
 | `params` | all | Values for the type's own parameters |
 | `agent`, `model`, `max_attempts`, `timeout_min`, `budget_usd`, `protected` | as applicable | Override the defaults for this task |
+
+### Gates: invariants and new checks
+
+A gate given as a plain string is an **invariant**: a build, a lint, the existing test suite. It may
+well pass before the task starts, and that is fine; its job is to stay green.
+
+A gate marked `new = true` claims to prove this task's new behaviour, so it is expected to **fail
+before the task is done, for the right reason**. `check-gates` runs every gate on the untouched tree
+and reports `pass`, `fail` or `error` for each (exit 126 and 127, a timeout, or a failure whose output
+does not match the gate's `fail_pattern`, are `error`). It complains about a `new` gate that already
+passes, since it cannot show the task was done, and about one that errors, since a missing import
+that exits 1 is not the intended failure. It never complains about an invariant that passes.
 
 ### Panel shorthand
 
@@ -103,9 +117,13 @@ written out in full as its own `[[task]]` when it needs more than the shorthand 
 | `needs`, `reviews` or `verifies` names no task, or the wrong kind | `'reviews' must name a produce task` |
 | A cycle | `dependency cycle: a -> b -> a` |
 | **A producer with no verifier** (D7) | `task 'design' has no gate, check, review or human verifier` |
-| A producer with no `outputs` | |
+| A producer with no `outputs`, or an output outside its `writes` | |
+| A path under `.git` or `.runs` in `outputs`, `writes` or `removes` | |
+| **A cycle in the acceptance graph** (A8): a verifier that `needs` its own target, or anything downstream of it | `'mutants' verifies 'implement' but needs 'report', which needs 'implement': implement can never be accepted` |
+| **Overlapping `writes` between tasks with no order between them** (A10) | `'extend' and 'implement' both write src/book/** and neither depends on the other` |
+| A task type needs a capability its agent profile is not qualified for (A5) | `'code-review' needs 'read'; profile 'codex' is qualified for 'answer' only` |
 | A check with no `run` | |
-| Warning: a later task claims frozen outputs (D8) | `'extend' will modify outputs of accepted task 'implement': src/book/**` |
+| Warning: a later, dependent task claims frozen outputs (D8) | `'extend' will modify outputs of accepted task 'implement': src/book/**. Accepted consumers of it: tests, report` |
 | Warning: an agent is configured to bypass its sandbox or permissions | |
 | Warning: the whole panel of a producer is advisory and it has no other verifier | treated as an error |
 
@@ -117,6 +135,7 @@ written out in full as its own `[[task]]` when it needs more than the shorthand 
 name = "design"
 kind = "produce"
 description = "Write or revise a design document"
+requires = ["read", "write", "resume"]   # capabilities the agent profile must be qualified for; see 05
 review_type = "design-review"        # which review type a `reviewers` panel uses
 agent = ""                           # optional defaults, below the task and above the workflow
 model = ""

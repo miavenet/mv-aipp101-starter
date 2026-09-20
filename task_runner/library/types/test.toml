@@ -1,5 +1,6 @@
 name = "test"
 kind = "produce"
+requires = ["read", "write", "execute", "resume"]        # capabilities the agent profile must be qualified for (doctor)
 description = "Write tests from a design or specification, before or apart from the code they test"
 review_type = "code-review"
 

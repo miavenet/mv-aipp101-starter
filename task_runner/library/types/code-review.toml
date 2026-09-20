@@ -1,5 +1,6 @@
 name = "code-review"
 kind = "review"
+requires = ["read"]        # capabilities the agent profile must be qualified for (doctor)
 description = "Review a code change from one perspective"
 
 prompt = """

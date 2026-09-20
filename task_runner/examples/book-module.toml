@@ -44,7 +44,11 @@ title = "Implement the L2 order book"
 needs = ["design", "tests"]            # tests/book/** is frozen by now: the author cannot edit the tests
 prompt = "Implement the order book so that the accepted tests pass."
 outputs = ["src/book/**"]
-gate = ["cmake --build build", "ctest --test-dir build -R book --output-on-failure"]
+writes = ["src/book/**", "CMakeLists.txt"]     # may also touch the build file; anything else is reverted
+gate = [
+  "cmake --build build",                                                        # invariant: must stay green
+  { run = "ctest --test-dir build -R book --output-on-failure", new = true, fail_pattern = "book" },
+]
 reviewers = [
   "principal-engineer",
   "devops",

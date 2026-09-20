@@ -1,5 +1,6 @@
 name = "summarize"
 kind = "produce"
+requires = ["read", "write"]        # capabilities the agent profile must be qualified for (doctor)
 description = "Write a narrative summary of upstream work, from the run record"
 
 prompt = """

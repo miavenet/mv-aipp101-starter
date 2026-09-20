@@ -1,5 +1,6 @@
 name = "design-review"
 kind = "review"
+requires = ["read"]        # capabilities the agent profile must be qualified for (doctor)
 description = "Review a design document from one perspective"
 
 prompt = """

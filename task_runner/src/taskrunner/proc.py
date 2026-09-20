@@ -15,6 +15,8 @@ from . import record
 
 TAIL_BYTES = 256 * 1024
 LINE_LIMIT = 64 * 1024
+# What the log and every stream observer see instead of a line longer than LINE_LIMIT.
+OVERLONG_PLACEHOLDER = b"[overlong line omitted for safe redaction]"
 GRACE_S = 5.0
 
 # The one list of what counts as a secret in stored output (04, rule 5; RUN-10).
@@ -59,7 +61,7 @@ class _Sink:
                 if len(self.pending) + len(part) > LINE_LIMIT:
                     self.pending = b""
                     self.overlong = True
-                    self._emit(b"[overlong line omitted for safe redaction]\n")
+                    self._emit(OVERLONG_PLACEHOLDER + b"\n")
                 else:
                     self.pending += part
             if newline >= 0:

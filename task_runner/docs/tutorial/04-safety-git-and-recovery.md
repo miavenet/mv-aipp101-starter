@@ -1,8 +1,9 @@
 # 4 — Safety: git, the record and recovery
 
-Status: **partly verified at stage 3.** Snapshots, restore, commit, intent recovery, write protection
-and human pauses are exercised through the engine and the CLI. See the
-[walkthrough](../stage-3-walkthrough.md). Review panels and replan remain design for later stages.
+> [!NOTE]
+> **Status: partly verified at stage 3.** Snapshots, restore, commit, intent recovery, write protection
+> and human pauses are exercised through the engine and the CLI. See the
+> [walkthrough](../stage-3-walkthrough.md). Review panels and replan remain design for later stages.
 
 The runner lets agents write to your repository unattended. This chapter explains why that cannot
 corrupt it, even when an agent misbehaves, a gate misbehaves, or the machine dies mid-step.
@@ -49,6 +50,11 @@ flowchart TB
     AG -. "reverted" .-> FR
     AG -. "reverted" .-> GX
     AG -. "reverted" .-> O
+
+    classDef produce fill:#2f4b7c,stroke:#1d3157,color:#ffffff
+    classDef ok fill:#2d6a4f,stroke:#1b4332,color:#ffffff
+    class AG produce
+    class W ok
 ```
 
 A later task may change a frozen file only by **claiming** it in its own `writes`, and only if it
@@ -72,6 +78,9 @@ flowchart TB
     N2 --> V
     C3 --> V
     V -- "not equal" --> EF["environment failure:<br/>stop, print paths, leave the tree alone"]
+
+    classDef stop fill:#a32d2d,stroke:#741f1f,color:#ffffff
+    class EF stop
 ```
 
 Embedded git repositories and submodule entries, which a restore could not handle, never reach it:
@@ -139,6 +148,11 @@ escalated finding, and running out of budget. In each case the runner records th
 tree it expects, and `resume` checks them first. If someone edited the tree or committed on the
 branch meanwhile, `resume` stops with a reconciliation error instead of guessing.
 
-Next: [architecture](05-architecture.md).
-Reference: [05 — Git, Crash recovery](../05-architecture.md#git),
+---
+
+| Previous | | Next |
+|:--|:-:|--:|
+| [3 — Review panels and findings](03-review-panels-and-findings.md) | [Contents](README.md) | [5 — Architecture](05-architecture.md) |
+
+**Reference:** [05 — Git, Crash recovery](../05-architecture.md#git),
 [04 — Rules of the record](../04-run-directory.md#rules-of-the-record).

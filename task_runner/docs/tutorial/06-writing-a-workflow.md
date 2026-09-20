@@ -1,9 +1,10 @@
 # 6 — Writing a workflow
 
-Status: **verified at stage 1.** Both example workflows were run through `runner validate` and load;
-the quoted error messages for a missing verifier, an unknown key, a verifier that needs its target
-and an ignored output were produced by the program. The other rows of the table are covered by the
-stage 1 tests.
+> [!NOTE]
+> **Status: verified at stage 1.** Both example workflows were run through `runner validate` and load;
+> the quoted error messages for a missing verifier, an unknown key, a verifier that needs its target
+> and an ignored output were produced by the program. The other rows of the table are covered by the
+> stage 1 tests.
 
 ## The smallest useful workflow
 
@@ -27,6 +28,11 @@ What the runner makes of it:
 flowchart LR
     W["write-notes<br/>type design"] 
     R(["write-notes.review.principal-engineer<br/>type design-review"]) -. reviews .-> W
+
+    classDef produce fill:#2f4b7c,stroke:#1d3157,color:#ffffff
+    classDef review fill:#6b4c9a,stroke:#4a3370,color:#ffffff
+    class W produce
+    class R review
 ```
 
 The panel shorthand expanded into a review task. Its type came from the producer's type: `design`
@@ -112,6 +118,11 @@ flowchart TB
         I2["implement"] --> L{{"lint-all (check)"}}
         L --> NEXT["later tasks"]
     end
+
+    classDef produce fill:#2f4b7c,stroke:#1d3157,color:#ffffff
+    classDef check fill:#0f6b6b,stroke:#094848,color:#ffffff
+    class I1,I2 produce
+    class M,L check
 ```
 
 A verifying task must **not** also list its target in `needs`: the target's acceptance would wait
@@ -157,5 +168,10 @@ out_of_scope = ["naming and style", "build configuration: the devops reviewer co
 Spend the effort on `blocking` and `out_of_scope`. A persona that blocks on taste makes panels
 never converge; one without an out-of-scope list repeats what the others say.
 
-Next: the [runbook](../runbook.md).
-Reference: [03 — Workflow file](../03-workflow-file.md), [library/README](../../library/README.md).
+---
+
+| Previous | | Next |
+|:--|:-:|--:|
+| [5 — Architecture](05-architecture.md) | [Contents](README.md) | [Runbook](../runbook.md) |
+
+**Reference:** [03 — Workflow file](../03-workflow-file.md), [library/README](../../library/README.md).

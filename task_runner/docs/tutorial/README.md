@@ -4,29 +4,78 @@ A guided tour of the task runner: what it is for, how a task moves through it, w
 way it is, and how to write a workflow. It is written for someone who has not read the design
 documents. Those remain the reference; this tutorial explains them and links to them.
 
-## Status
-
-| Mark | Meaning |
-|---|---|
-| **design** | Written from the design documents. Not yet checked against code |
-| **verified at stage N** | Commands were run, and diagrams compared with the program, at that stage of the [plan](../07-implementation-plan.md) |
+## Chapters
 
 | # | Chapter | You learn | Status |
-|---|---|---|---|
+|--:|---|---|---|
 | 1 | [The idea](01-the-idea.md) | What problem this solves, and the five rules everything follows from | design |
 | 2 | [A task, end to end](02-a-task-end-to-end.md) | The life of one producer: attempt, checks, review, commit | design |
 | 3 | [Review panels and findings](03-review-panels-and-findings.md) | How several reviewers converge instead of looping forever | design |
 | 4 | [Safety: git, the record and recovery](04-safety-git-and-recovery.md) | Why a crash, a bad agent or a bad gate cannot corrupt your repository | partly verified at stage 3 |
 | 5 | [Architecture](05-architecture.md) | The modules, who decides what, how agents are driven | design |
 | 6 | [Writing a workflow](06-writing-a-workflow.md) | The file format by example, and the mistakes `validate` catches | verified at stage 1 |
-| — | [Runbook](../runbook.md) | Operating a run: commands, stops, recovery | partly verified at stage 3 |
-
-## How to read it
+| | [Runbook](../runbook.md) | Operating a run: commands, stops, recovery | partly verified at stage 3 |
 
 Chapters 1 to 3 are enough to understand what a run does. Chapter 4 is for anyone who needs to
 trust it. Chapter 5 is for anyone who will change it. Chapter 6 and the runbook are for daily use.
 
-Diagrams are [Mermaid](https://mermaid.js.org/); GitHub renders them in place.
+Each chapter opens with a note that says how far it has been checked:
+
+| Status | Meaning |
+|---|---|
+| **design** | Written from the design documents. Not yet checked against code |
+| **verified at stage N** | Commands were run, and diagrams compared with the program, at that stage of the [plan](../07-implementation-plan.md) |
+
+## How to read the diagrams
+
+Diagrams are [Mermaid](https://mermaid.js.org/); GitHub renders them in place. Shape and colour
+mean the same thing in every chapter. A box with no colour is a plain step.
+
+```mermaid
+flowchart LR
+    subgraph kinds["The four kinds of task"]
+        direction LR
+        P["produce"]
+        R(["review"])
+        C{{"check"}}
+        H[/"human"/]
+    end
+    subgraph outcomes["What happened to the work"]
+        direction LR
+        OK["accepted"]
+        RW["sent back"]
+        ST["stopped"]
+        SA["set aside"]
+    end
+    kinds ~~~ outcomes
+
+    classDef produce fill:#2f4b7c,stroke:#1d3157,color:#ffffff
+    classDef review fill:#6b4c9a,stroke:#4a3370,color:#ffffff
+    classDef check fill:#0f6b6b,stroke:#094848,color:#ffffff
+    classDef human fill:#a23b72,stroke:#742951,color:#ffffff
+    classDef ok fill:#2d6a4f,stroke:#1b4332,color:#ffffff
+    classDef rework fill:#8a6100,stroke:#5e4200,color:#ffffff
+    classDef stop fill:#a32d2d,stroke:#741f1f,color:#ffffff
+    classDef aside fill:#64748b,stroke:#475569,color:#ffffff
+    class P produce
+    class R review
+    class C check
+    class H human
+    class OK ok
+    class RW rework
+    class ST stop
+    class SA aside
+```
+
+| Colour | Used for |
+|---|---|
+| Blue, violet, teal, rose | A task of kind `produce`, `review`, `check`, `human`. Rose also marks any point where a person decides |
+| Green | Work that was accepted, or an action that is allowed |
+| Ochre | Work sent back to its author, or a finding that still blocks |
+| Red | The run stops, or the task ends as `failed` or `blocked` |
+| Grey | Closed with nothing more to do: `skipped`, `noted`, `superseded` |
+
+New diagrams should copy their `classDef` lines from the one above.
 
 ## Words used throughout
 

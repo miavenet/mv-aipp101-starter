@@ -1,6 +1,7 @@
 # 3 — Review panels and findings
 
-Status: **design**
+> [!NOTE]
+> **Status: design.** Written from the design documents, not yet checked against code.
 
 Several reviewers on one piece of work is where unattended pipelines usually break: they loop, they
 contradict each other, or their objections are "fixed" with nobody checking. This chapter explains
@@ -71,6 +72,15 @@ stateDiagram-v2
     resolved --> [*]
     noted --> [*]
     superseded --> [*]
+
+    classDef rework fill:#8a6100,stroke:#5e4200,color:#ffffff
+    classDef human fill:#a23b72,stroke:#742951,color:#ffffff
+    classDef ok fill:#2d6a4f,stroke:#1b4332,color:#ffffff
+    classDef aside fill:#64748b,stroke:#475569,color:#ffffff
+    class open rework
+    class escalated human
+    class resolved ok
+    class noted,superseded aside
 ```
 
 Advisory findings never stay open. They are shown to the author for information, need no response,
@@ -88,6 +98,11 @@ flowchart TB
     Q1 -- no --> Q2{"does 'caused_by' name a location<br/>that IS inside the rework diff?<br/>(the runner checks this itself)"}
     Q2 -- yes --> B
     Q2 -- no --> ADV["recorded as advisory"]
+
+    classDef rework fill:#8a6100,stroke:#5e4200,color:#ffffff
+    classDef aside fill:#64748b,stroke:#475569,color:#ffffff
+    class B rework
+    class ADV aside
 ```
 
 The second case exists because a rework can change a function and break an unchanged caller. The
@@ -135,6 +150,11 @@ Every finding from every reviewer and round, with its history, is in one file:
 it. Because it decides every verdict, it is covered by the record's integrity check from the first
 finding on.
 
-Next: [safety: git, the record and recovery](04-safety-git-and-recovery.md).
-Reference: [02 — Findings](../02-concepts.md#findings-d5-d15),
+---
+
+| Previous | | Next |
+|:--|:-:|--:|
+| [2 — A task, end to end](02-a-task-end-to-end.md) | [Contents](README.md) | [4 — Safety: git, the record and recovery](04-safety-git-and-recovery.md) |
+
+**Reference:** [02 — Findings](../02-concepts.md#findings-d5-d15),
 [04 — findings.json](../04-run-directory.md#findingsjson-the-ledger).

@@ -1,6 +1,7 @@
 # 1 — The idea
 
-Status: **design**
+> [!NOTE]
+> **Status: design.** Written from the design documents, not yet checked against code.
 
 ## The problem
 
@@ -27,16 +28,25 @@ flowchart LR
     design["design<br/>(produce)"] --> tests["tests<br/>(produce)"]
     tests --> implement["implement<br/>(produce)"]
     implement --> report["report<br/>(produce)"]
-    report --> signoff["signoff<br/>(human)"]
+    report --> signoff[/"signoff<br/>(human)"/]
 
     dr1(["design review:<br/>principal engineer"]) -. reviews .-> design
     dr2(["design review:<br/>spec compliance"]) -. reviews .-> design
     cr1(["code review:<br/>principal engineer"]) -. reviews .-> implement
     cr2(["code review:<br/>devops, advisory"]) -. reviews .-> implement
     mut{{"mutants<br/>(check)"}} -. verifies .-> implement
+
+    classDef produce fill:#2f4b7c,stroke:#1d3157,color:#ffffff
+    classDef review fill:#6b4c9a,stroke:#4a3370,color:#ffffff
+    classDef check fill:#0f6b6b,stroke:#094848,color:#ffffff
+    classDef human fill:#a23b72,stroke:#742951,color:#ffffff
+    class design,tests,implement,report produce
+    class dr1,dr2,cr1,cr2 review
+    class mut check
+    class signoff human
 ```
 
-Solid arrows are `needs`: *implement* starts only when *tests* is **accepted**. Dotted arrows are
+Colour marks the kind of each task. Solid arrows are `needs`: *implement* starts only when *tests* is **accepted**. Dotted arrows are
 verification: those tasks judge a producer's work before it can be accepted.
 
 ## Four kinds of task
@@ -105,5 +115,10 @@ flowchart LR
 Deliverables live in the repository, where gates can build and test them. The run directory is the
 record of how they came to be, laid out like a build directory.
 
-Next: [a task, end to end](02-a-task-end-to-end.md).
-Reference: [02 — Concepts](../02-concepts.md), [00 — Decisions](../00-decisions.md).
+---
+
+| Previous | | Next |
+|:--|:-:|--:|
+| [Contents](README.md) |  | [2 — A task, end to end](02-a-task-end-to-end.md) |
+
+**Reference:** [02 — Concepts](../02-concepts.md), [00 — Decisions](../00-decisions.md).

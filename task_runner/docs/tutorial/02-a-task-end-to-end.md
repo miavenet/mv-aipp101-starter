@@ -1,8 +1,9 @@
 # 2 — A task, end to end
 
-Status: **design, with the stage 3 subset implemented**. Producer transactions, gates, checks,
-human decisions and the command adapter now run; panels, headless adapters and budgets remain
-later-stage work. See the [verified CLI walkthrough](../stage-3-walkthrough.md).
+> [!NOTE]
+> **Status: design, with the stage 3 subset implemented**. Producer transactions, gates, checks,
+> human decisions and the command adapter now run; panels, headless adapters and budgets remain
+> later-stage work. See the [verified CLI walkthrough](../stage-3-walkthrough.md).
 
 This chapter follows one producer, `implement`, from the moment it becomes ready to the moment its
 work is a commit. Everything else in the runner exists to make this path trustworthy.
@@ -30,6 +31,17 @@ stateDiagram-v2
     failed --> [*]
     blocked --> [*]
     skipped --> [*]
+
+    classDef ok fill:#2d6a4f,stroke:#1b4332,color:#ffffff
+    classDef rework fill:#8a6100,stroke:#5e4200,color:#ffffff
+    classDef human fill:#a23b72,stroke:#742951,color:#ffffff
+    classDef stop fill:#a32d2d,stroke:#741f1f,color:#ffffff
+    classDef aside fill:#64748b,stroke:#475569,color:#ffffff
+    class accepted ok
+    class rework rework
+    class waiting_human human
+    class failed,blocked stop
+    class skipped aside
 ```
 
 `failed` means the run could not do it (exit code 2). `blocked` and `waiting_human` mean a person
@@ -59,16 +71,22 @@ flowchart TB
     S7 -- no --> RW
     S7 -- yes --> ACC["ACCEPTED:<br/>commit exactly CANDIDATE,<br/>freeze outputs"]
 
-    classDef free fill:#e8f4e8,stroke:#4a4,color:#111111
-    classDef cheap fill:#fff4d6,stroke:#c90,color:#111111
-    classDef costly fill:#fde2e2,stroke:#c44,color:#111111
+    classDef free fill:#e2e8f0,stroke:#94a3b8,color:#111111
+    classDef cheap fill:#94a3b8,stroke:#64748b,color:#111111
+    classDef costly fill:#475569,stroke:#334155,color:#ffffff
+    classDef ok fill:#2d6a4f,stroke:#1b4332,color:#ffffff
+    classDef rework fill:#8a6100,stroke:#5e4200,color:#ffffff
+    classDef stop fill:#a32d2d,stroke:#741f1f,color:#ffffff
     class S1,S2,S3 free
     class S4,S5 cheap
     class S6,S7 costly
+    class ACC ok
+    class RW rework
+    class X1 stop
 ```
 
-Green steps are free, yellow cost seconds to minutes, red cost agent calls or a person's time. A
-producer must have at least one of steps 4 to 7, or the workflow is rejected when it loads.
+The darker the step, the more it costs: pale steps are free, mid-grey steps cost seconds to
+minutes, dark steps cost agent calls or a person's time. A producer must have at least one of steps 4 to 7, or the workflow is rejected when it loads.
 
 ## Every result is tied to one candidate
 
@@ -145,11 +163,19 @@ flowchart LR
     P3 --> P4["verify by snapshot:<br/>tree == BASE"]
     P4 --> P5["mark dependants 'skipped'"]
     P5 --> P6["other branches of the DAG continue"]
+
+    classDef stop fill:#a32d2d,stroke:#741f1f,color:#ffffff
+    class F stop
 ```
 
 Nothing is thrown away. `retry TASK --apply-patch` puts the work back if its base still matches;
 without the flag, attempts start clean.
 
-Next: [review panels and findings](03-review-panels-and-findings.md).
-Reference: [02 — Concepts, Acceptance and Rework](../02-concepts.md#acceptance-d7),
+---
+
+| Previous | | Next |
+|:--|:-:|--:|
+| [1 — The idea](01-the-idea.md) | [Contents](README.md) | [3 — Review panels and findings](03-review-panels-and-findings.md) |
+
+**Reference:** [02 — Concepts, Acceptance and Rework](../02-concepts.md#acceptance-d7),
 [05 — Producer lifecycle](../05-architecture.md#producer-lifecycle).

@@ -1,8 +1,9 @@
 # 5 — Architecture
 
-Status: **design, with the stage 3 subset implemented**. Producer transactions, gates, checks,
-human decisions and the command adapter now run; panels, headless adapters and budgets remain
-later-stage work. See the [verified CLI walkthrough](../stage-3-walkthrough.md).
+> [!NOTE]
+> **Status: design, with the stage 3 subset implemented**. Producer transactions, gates, checks,
+> human decisions and the command adapter now run; panels, headless adapters and budgets remain
+> later-stage work. See the [verified CLI walkthrough](../stage-3-walkthrough.md).
 
 ## The modules, and who is allowed to decide
 
@@ -57,6 +58,9 @@ flowchart TB
     CAN -- yes --> WAIT
     WAIT --> SAVE["save state, regenerate STATUS.md"]
     SAVE --> AP
+
+    classDef stop fill:#a32d2d,stroke:#741f1f,color:#ffffff
+    class STOP stop
 ```
 
 Given the same workflow and the same results from agents, the same things happen in the same order.
@@ -121,6 +125,11 @@ flowchart LR
     B -. fails .-> PE
     C -. fails .-> PE
     D -. fails .-> PE
+
+    classDef ok fill:#2d6a4f,stroke:#1b4332,color:#ffffff
+    classDef stop fill:#a32d2d,stroke:#741f1f,color:#ffffff
+    class OK ok
+    class PE stop
 ```
 
 A provider's schema feature makes valid answers likelier; it is never the check. A failing test
@@ -168,5 +177,10 @@ Reservation means four reviewers cannot each start a $5 call with $1 left. Spend
 as three numbers, known, reserved and unpriced, because Codex reports tokens but no cost, and the
 runner does not invent dollars.
 
-Next: [writing a workflow](06-writing-a-workflow.md).
-Reference: [05 — Architecture](../05-architecture.md).
+---
+
+| Previous | | Next |
+|:--|:-:|--:|
+| [4 — Safety: git, the record and recovery](04-safety-git-and-recovery.md) | [Contents](README.md) | [6 — Writing a workflow](06-writing-a-workflow.md) |
+
+**Reference:** [05 — Architecture](../05-architecture.md).

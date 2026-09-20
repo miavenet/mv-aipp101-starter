@@ -1,0 +1,1 @@
+{"outcome":"blocked","notes":"The execution sandbox failed before any command ran: bwrap cannot create a namespace because unprivileged user namespaces are unavailable. No files were changed, and the acceptance commands could not be run."}

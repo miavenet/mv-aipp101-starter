@@ -1,0 +1,1 @@
+{"approved":false,"reasons":["The pattern treats only ASCII letters and digits as alphanumeric, incorrectly removing Unicode letters and digits. For example, slugify('café') returns 'caf' instead of 'café'. The task does not specify an ASCII-only restriction."]}

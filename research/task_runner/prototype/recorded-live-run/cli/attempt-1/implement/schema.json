@@ -1,0 +1,1 @@
+{"type": "object", "additionalProperties": false, "required": ["outcome", "notes"], "properties": {"outcome": {"type": "string", "enum": ["done", "blocked"]}, "notes": {"type": "string"}}}

@@ -1,6 +1,6 @@
 """The run record: creation, durable state, intents and reconciliation, the lock, derived files.
 
-Scenarios REC-01 to REC-13 (REC-11 at primitive level is in test_gitops), RUN-07, RUN-08, RUN-11,
+Scenarios REC-01 to REC-13, REC-16 (REC-11 at primitive level is in test_gitops), RUN-07, RUN-08, RUN-11,
 RUN-16, and the record half of FRZ-07. Each crash test stops the runner at an injected point,
 then reconciles, as `resume` will.
 """
@@ -570,6 +570,89 @@ class AgentRecovery(RunCase):
         self.assertEqual(n, 2)
         self.assertNotEqual(retry_dir, inv)
         self.assertTrue(os.path.exists(os.path.join(inv, "outcome.json")))
+
+
+class DecisionPublication(RunCase):
+    def set_aside_path(self):
+        return os.path.join(self.run_.task_dir("design"), "set-aside.json")
+
+    def set_aside_record(self, attempt):
+        return {"task": "design", "attempt": attempt, "status": "blocked",
+                "reason": f"reason of attempt {attempt}", "at": "2026-09-20T11:02:14Z",
+                "paths": ["docs/d.md"]}
+
+    def test_a_published_decision_is_protected_and_leaves_no_intent(self):
+        path = self.set_aside_path()
+        self.run_.publish_decision(path, self.set_aside_record(1))
+        run = self.reload()
+        self.assertEqual(record.read_json(path), self.set_aside_record(1))
+        self.assertEqual(run.state["intents"], [])
+        self.assertIn("tasks/010-design/set-aside.json", run._manifest()["files"])
+        self.assertEqual(run.integrity_check(), [])
+        with open(os.path.join(run.path, "events.jsonl"), encoding="utf-8") as fh:
+            events = [json.loads(line) for line in fh]
+        self.assertEqual([e["event"] for e in events[-2:]], ["intent", "outcome"])
+        self.assertEqual(events[-1]["kind"], "decision")
+
+    def test_a_replaced_decision_file_is_repaired(self):
+        """rec: a replaced decision file is repaired (REC-16)"""
+        path = self.set_aside_path()
+        self.run_.publish_decision(path, self.set_aside_record(1))
+        with self.assertRaises(Crash):
+            self.run_.publish_decision(path, self.set_aside_record(2),
+                                       crash=crash_at("decision:file-written"))
+        run = self.reload()
+        self.assertEqual(record.read_json(path), self.set_aside_record(2))    # new bytes ...
+        self.assertEqual(run.integrity_check(),
+                         ["tasks/010-design/set-aside.json was changed"])     # ... under the old hash
+        self.assertEqual([it["kind"] for it in run.state["intents"]], ["decision"])
+
+        done = record.reconcile(run, self.g)
+        self.assertEqual(len(done), 1)
+        run = self.reload()
+        self.assertEqual(run.state["intents"], [])
+        self.assertEqual(run.integrity_check(), [])
+        self.assertEqual(record.read_json(path), self.set_aside_record(2))
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), record.dump_json(self.set_aside_record(2)))
+        self.assertEqual(record.reconcile(self.reload(), self.g), [])         # and once more
+
+    def test_a_first_decision_file_lost_before_its_manifest_entry_is_repaired(self):
+        path = self.set_aside_path()
+        with self.assertRaises(Crash):
+            self.run_.publish_decision(path, self.set_aside_record(1),
+                                       crash=crash_at("decision:file-written"))
+        record.reconcile(self.reload(), self.g)
+        run = self.reload()
+        self.assertEqual(run.integrity_check(), [])
+        self.assertIn("tasks/010-design/set-aside.json", run._manifest()["files"])
+        self.assertEqual(record.read_json(path), self.set_aside_record(1))
+
+    def test_an_intent_without_its_file_is_rebuilt_from_the_payload(self):
+        """The crash came after the intent was durable and before any write: the file is missing,
+        or still holds the previous record. Only the intent's payload can repair it."""
+        path = self.set_aside_path()
+        rel = "tasks/010-design/set-aside.json"
+        self.run_.begin("decision", path=rel, payload=self.set_aside_record(1))
+        self.assertFalse(os.path.exists(path))
+        record.reconcile(self.reload(), self.g)
+        run = self.reload()
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), record.dump_json(self.set_aside_record(1)))
+        self.assertEqual(run._manifest()["files"][rel], record.sha256_file(path))
+        self.assertEqual(run.integrity_check(), [])
+        self.assertEqual(run.state["intents"], [])
+
+        self.run_ = run
+        run.begin("decision", path=rel, payload=self.set_aside_record(2))
+        self.assertEqual(record.read_json(path), self.set_aside_record(1))    # the old record
+        record.reconcile(self.reload(), self.g)
+        run = self.reload()
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), record.dump_json(self.set_aside_record(2)))
+        self.assertEqual(run._manifest()["files"][rel], record.sha256_file(path))
+        self.assertEqual(run.integrity_check(), [])
+        self.assertEqual(run.state["intents"], [])
 
 
 if __name__ == "__main__":

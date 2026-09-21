@@ -623,6 +623,15 @@ class Run:
         write_durable(path, dump_json(obj))
         self.protect(path)
 
+    def publish_decision(self, path, obj, crash=_no_crash):
+        """write_decision under an intent: the complete payload is recorded first, so a crash between
+        the file and its manifest entry is repaired by writing both again from the intent."""
+        op = self.begin("decision", path=self._rel(path), payload=obj)
+        write_durable(path, dump_json(obj))
+        crash("decision:file-written")
+        self.protect(path)
+        self.finish(op, path=self._rel(path))
+
     def close_directory(self, directory):
         """A finished attempt, round or invocation directory: its decision files are now fixed.
         Hashing again gives the same result, so this is safe to repeat after a crash."""
@@ -776,6 +785,12 @@ def _reconcile_restore(run, git, it, crash, **_):
     return f"{it['op']} restore: run again from the pinned target and verified"
 
 
+def _reconcile_decision(run, git, it, **_):
+    run.write_decision(os.path.join(run.path, it["path"]), it["payload"])
+    run.finish(it["op"], path=it["path"])
+    return f"{it['op']} decision {it['path']}: written again from the intent"
+
+
 def _reconcile_pin(run, git, it, **_):
     git.pin(run.name, it["name"], it["object"])
     run.finish(it["op"], ref=it["name"])
@@ -853,7 +868,8 @@ def _reconcile_replan(run, git, it, crash, **_):
 _RECONCILERS = {"replan": _reconcile_replan, "branch": _reconcile_branch,
                 "commit": _reconcile_commit, "restore": _reconcile_restore, "pin": _reconcile_pin,
                 "patch": _reconcile_patch, "close": _reconcile_close, "revert": _reconcile_revert,
-                "agent": _reconcile_agent, "command": _reconcile_command}
+                "agent": _reconcile_agent, "command": _reconcile_command,
+                "decision": _reconcile_decision}
 
 
 # -- rendering ----------------------------------------------------------------------------------

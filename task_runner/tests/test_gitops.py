@@ -432,6 +432,45 @@ class Commits(GitCase):
         self.assertEqual(gitout(self.root, "status", "--porcelain"), "")
 
 
+class TreeWith(GitCase):
+    def test_paths_are_taken_from_the_source_and_the_rest_from_the_base(self):
+        """git: `tree_with` takes each path from the source tree, an absent one is removed, and
+        everything else stays as the base has it (the piece shared by the commit recipe and the
+        recovery of set-aside work)."""
+        self.write("old.txt", "old\n")
+        self.write("keep.txt", "keep\n")
+        self.commit()
+        base = self.g.tree_of("HEAD")
+        self.write("src/a.txt", "candidate\n")
+        self.write("src/new.txt", "new\n")
+        self.write("keep.txt", "changed elsewhere\n")
+        os.unlink(self.path("old.txt"))
+        os.chmod(self.path("src/new.txt"), 0o755)
+        source = self.snap()
+        tree = self.g.tree_with(base, source, ["src/a.txt", "src/new.txt", "old.txt"])
+        entries = self.g.ls_tree(tree)
+        self.assertEqual(sorted(set(entries) - set(self.g.ls_tree(base))), ["src/a.txt", "src/new.txt"])
+        self.assertNotIn("old.txt", entries)
+        self.assertEqual(entries["keep.txt"], self.g.ls_tree(base)["keep.txt"])
+        self.assertEqual(entries["src/a.txt"], self.g.ls_tree(source)["src/a.txt"])
+        self.assertEqual(entries["src/new.txt"], self.g.ls_tree(source)["src/new.txt"])
+        self.assertEqual(entries["src/new.txt"][0], "100755")
+
+    def test_no_paths_is_the_base_and_the_repository_is_untouched(self):
+        self.write("a.txt", "one\n")
+        self.commit()
+        base = self.g.tree_of("HEAD")
+        self.write("a.txt", "two\n")
+        source = self.snap()
+        before = (gitout(self.root, "status", "--porcelain"), gitout(self.root, "ls-files", "-s"))
+        self.assertEqual(self.g.tree_with(base, source, []), base)
+        self.assertEqual(self.g.tree_with(base, source, ["a.txt"]), source)
+        self.assertEqual((gitout(self.root, "status", "--porcelain"),
+                          gitout(self.root, "ls-files", "-s")), before)
+        with open(self.path("a.txt")) as fh:
+            self.assertEqual(fh.read(), "two\n")
+
+
 class Reverts(GitCase):
     def three_commits(self):
         commits = []

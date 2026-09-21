@@ -400,23 +400,29 @@ class Git:
 
     # -- the commit recipe (B2) --------------------------------------------------------------
 
-    def build_commit_tree(self, candidate_tree, paths):
-        """HEAD's tree with the task's `paths` taken from the candidate. Must equal the candidate:
-        by then every change outside the task's `writes` has been reverted."""
-        cand = self.ls_tree(candidate_tree)
+    def tree_with(self, base_tree, source_tree, paths):
+        """`base_tree` with each of `paths` taken from `source_tree`; a path absent from
+        `source_tree` is absent from the result. Computed in a scratch index; the real index and
+        the work tree are not touched. Returns a tree id."""
+        src = self.ls_tree(source_tree)
         lines = []
         for rel in paths:
-            if rel in cand:
-                mode, sha = cand[rel]
+            if rel in src:
+                mode, sha = src[rel]
                 lines.append(_bytes(f"{mode} {sha}\t{rel}") + b"\0")
             else:
                 lines.append(_bytes(f"0 {ZERO}\t{rel}") + b"\0")
         with tempfile.TemporaryDirectory(prefix="task-runner-") as tmp:
             index = os.path.join(tmp, "index")
-            self.run("read-tree", "HEAD", index=index)
+            self.run("read-tree", base_tree, index=index)
             if lines:
                 self.run("update-index", "-z", "--index-info", index=index, stdin=b"".join(lines))
-            tree = self.out("write-tree", index=index)
+            return self.out("write-tree", index=index)
+
+    def build_commit_tree(self, candidate_tree, paths):
+        """HEAD's tree with the task's `paths` taken from the candidate. Must equal the candidate:
+        by then every change outside the task's `writes` has been reverted."""
+        tree = self.tree_with(self.tree_of("HEAD"), candidate_tree, paths)
         if tree != candidate_tree:
             extra = [p for _s, p, _o, _n in self.changed_paths(tree, candidate_tree)]
             raise CommitRefused("the tree to commit is not the verified candidate; paths outside "

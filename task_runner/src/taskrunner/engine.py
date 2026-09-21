@@ -919,7 +919,16 @@ class Engine(ProviderRouting, Panels):
         final = st["final"]
         for rel in self.git.embedded_repositories():
             self.git.remove_embedded(rel)
-        tree = self.git.snapshot(self.run.index_file)
+        tree = st.get("pending_set_aside")
+        if not tree:
+            # What is being set aside, remembered before anything is undone: the restore below
+            # puts the work tree back to `base`, so a step replayed after a crash in it must take
+            # the candidate from here and never snapshot the tree again (as `pending_attempt`
+            # keeps a numbered directory). Without it the replay would pin, patch and record an
+            # empty candidate over the work.
+            tree = self.git.snapshot(self.run.index_file)
+            st["pending_set_aside"] = tree
+            self.run.save()
         self.pin(f"{tid}/set-aside", tree)
         patch_rel = os.path.relpath(os.path.join(self.run.task_dir(tid), "failed.patch"),
                                     self.run.path)
@@ -927,8 +936,17 @@ class Engine(ProviderRouting, Panels):
         record.write_durable(os.path.join(self.run.path, patch_rel),
                              self.git.full_patch(st["base"], tree))
         self.run.finish(op, path=patch_rel)
-        self.crash("set-aside:before-restore")
         changed = [p for _s, p, _o, _n in self.git.changed_paths(st["base"], tree)]
+        attempt, attempt_dir = _latest_attempt(self.run, tid)
+        self.run.publish_decision(
+            os.path.join(self.run.task_dir(tid), "set-aside.json"),
+            {"task": tid, "attempt": attempt, "attempt_dir": attempt_dir,
+             "status": final["status"], "reason": final["reason"], "at": _now(),
+             "head": self.git.head(), "base": st["base"], "candidate": tree,
+             "candidate_ref": f"{gitops.REF_PREFIX}{self.run.name}/{tid}/set-aside",
+             "patch": patch_rel, "paths": changed},
+            crash=self.crash)
+        self.crash("set-aside:before-restore")
         self.restore(st["base"], changed, st["base"])
         for v in self.verifiers_of(tid, "check") + self.verifiers_of(tid, "human") + self.reviewers_of(tid):
             vst = self.st(v["id"])
@@ -937,11 +955,68 @@ class Engine(ProviderRouting, Panels):
         if st.get("attempt_dir"):
             self.run.close_directory(os.path.join(self.run.path, st["attempt_dir"]))
         st.update(status=final["status"], reason=final["reason"], step=None, session_id=None)
+        st.pop("pending_set_aside", None)                   # the step is done; nothing to replay
         self.run.state["active_producer"] = None
         self.mark_skips()
         self.save()
         self.say(f"{tid}: {final['status']} ({final['reason']}). Its work is in failed.patch")
         return None
+
+
+# -- the set-aside record (D9, G1) -----------------------------------------------------------------
+
+def _latest_attempt(run, tid):
+    """The highest attempt directory of a task: its number and its path relative to the run.
+    `(0, None)` when the task has none; numbers are never reused, so the highest is the last."""
+    tdir = run.task_dir(tid)
+    used = [int(name[len("attempt-"):]) for name in os.listdir(tdir)
+            if name.startswith("attempt-") and name[len("attempt-"):].isdigit()]
+    if not used:
+        return 0, None
+    n = max(used)
+    return n, os.path.relpath(os.path.join(tdir, f"attempt-{n}"), run.path)
+
+
+def _set_aside_head(run, git, base):
+    """The commit the branch was on when work was set aside: `set_aside` returns the tree to
+    `base` and `begin_transaction` starts from `base == tree_of(HEAD)`, so it is a commit of this
+    run branch whose tree is `base`. The oldest such commit is taken, so that `head..HEAD` is the
+    widest range a later check can examine. The run's starting commit is searched too, and only
+    while it is still an ancestor of HEAD. None when the history holds no such commit."""
+    start = run.info["base_commit"]
+    if git.run("merge-base", "--is-ancestor", start, "HEAD", check=False).returncode:
+        return None
+    commits = git.out("rev-list", f"{start}..HEAD").splitlines() + [start]
+    for sha in reversed(commits):                          # rev-list is newest first
+        if git.tree_of(sha) == base:
+            return sha
+    return None
+
+
+def set_aside_record(run, git, tid):
+    """The task's set-aside record: `set-aside.json` when it is there, otherwise the same record
+    derived from what an older runner left behind, and None when the task has no set-aside work
+    or nothing is left to derive from. Deriving writes nothing; publishing is the caller's step,
+    so a refusal can never change the record."""
+    tdir = run.task_dir(tid)
+    path = os.path.join(tdir, "set-aside.json")
+    if os.path.exists(path):
+        return record.read_json(path)
+    patch = os.path.join(tdir, "failed.patch")
+    if not os.path.exists(patch):
+        return None
+    st = run.state["tasks"][tid]
+    base = st.get("base")
+    ref = f"{gitops.REF_PREFIX}{run.name}/{tid}/set-aside"
+    candidate = git.pins(run.name).get(ref)
+    if not base or not candidate:                # an old run already reduced, or an unpinned tree
+        return None
+    attempt, attempt_dir = _latest_attempt(run, tid)
+    return {"task": tid, "attempt": attempt, "attempt_dir": attempt_dir,
+            "status": st.get("status"), "reason": st.get("reason", ""), "at": None,
+            "head": _set_aside_head(run, git, base), "base": base, "candidate": candidate,
+            "candidate_ref": ref, "patch": os.path.relpath(patch, run.path),
+            "paths": [p for _s, p, _o, _n in git.changed_paths(base, candidate)]}
 
 
 def _config_hash(verifier):

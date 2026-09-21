@@ -1068,6 +1068,7 @@ FILE_NOTES = {
     "task.json": "The resolved task definition",
     "findings.json": "The findings ledger of this producer: all reviewers, all rounds",
     "failed.patch": "The complete, binary-capable patch of work that was set aside",
+    "set-aside.json": "What was set aside: the attempt, why, the base and candidate trees, the paths",
     "commit.json": "The accepted commit: sha, files, message",
     "decision.json": "Who approved or rejected, when, and the comment",
     "prompt.md": "Exactly what the agent was sent",

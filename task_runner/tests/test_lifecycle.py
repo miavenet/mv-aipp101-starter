@@ -1,5 +1,6 @@
 """One producer transaction, end to end, with the scripted agent: acceptance and rework (ACC),
-freezing and protection (FRZ), failure and the DAG (FAIL), and resuming from disk (RUN-03, RUN-12).
+freezing and protection (FRZ), failure and the DAG (FAIL), the record of set-aside work (RUN-18,
+RUN-21) and resuming from disk (RUN-03, RUN-12).
 
 Every test ends with `check_invariants`: every accepted commit is exactly the verified candidate,
 and nothing else is in the tree when a transaction ends."""
@@ -13,7 +14,7 @@ import unittest
 
 from helpers import RUNNER, EngineCase, done, git
 
-from taskrunner import agents, prompts, validate
+from taskrunner import agents, engine, gitops, prompts, record, validate
 
 ONE = '''
 [[task]]
@@ -654,6 +655,26 @@ gate = ["true"]
         self.check_invariants()
 
 
+def read_record(case, task):
+    """The task's set-aside record, read from `set-aside.json` or derived from what is left."""
+    run = case.the_run()
+    return engine.set_aside_record(run, gitops.Git(case.root), task)
+
+
+def make_legacy(case, task):
+    """A run as the previous runner left it: `failed.patch` and `base` in the state, but no
+    `set-aside.json` and no manifest entry for one. Returns the record that was published."""
+    run = case.the_run()
+    path = os.path.join(run.task_dir(task), "set-aside.json")
+    published = record.read_json(path)
+    os.unlink(path)
+    manifest_path = os.path.join(run.path, "integrity.json")
+    manifest = record.read_json(manifest_path)
+    del manifest["files"][os.path.relpath(path, run.path)]
+    record.write_durable(manifest_path, record.dump_json(manifest))
+    return published
+
+
 class Failure(EngineCase):
     def test_work_is_set_aside(self):
         """fail: work is set aside (FAIL-01)"""
@@ -775,6 +796,118 @@ gate = ["true"]
         self.assertNotIn("set aside and is back", self.prompt(1))         # a clean start
         self.check_invariants()
 
+    def test_recovery_leaves_the_record_alone(self):
+        """fail: recovery leaves the record alone (FAIL-14)"""
+        self.workflow(ONE.replace('outputs = ["src/a.txt"]', 'outputs = ["src/a.txt"]\n'
+                                  'writes = ["src/**"]\nmax_attempts = 1'))
+        self.script([{"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"},
+                      "answer": done()}])
+        self.assertEqual(self.start(), 2)
+        run = self.the_run()
+        first = read_record(self, "make")
+        self.assertEqual((first["task"], first["attempt"], first["status"]), ("make", 1, "failed"))
+        self.assertEqual(first["paths"], ["src/a.txt", "src/notes.txt"])
+        self.assertEqual(first["head"], self.git_out("rev-parse", "HEAD"))
+        self.assertEqual(first["candidate_ref"],
+                         f"refs/task-runner/{run.name}/make/set-aside")
+        self.assertEqual(first["patch"],
+                         os.path.relpath(self.task_file("make", "failed.patch"), run.path))
+        with open(self.task_file("make", "failed.patch")) as fh:
+            first_patch = fh.read()
+        attempt_one = self.task_file("make", "attempt-1")
+        digest = tree_digest(attempt_one)
+
+        # The work goes back, the next attempt adds to it, and the task is set aside again.
+        self.script([{"write": {"src/a.txt": "still bad\n", "src/more.txt": "more\n"},
+                      "answer": done()}])
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         0, self.output)
+        self.assertTrue(os.path.exists(self.task_file("make", "failed.patch")))
+        self.assertEqual(self.resume(), 2, self.output)
+        second = read_record(self, "make")
+        self.assertEqual((second["attempt"], second["attempt_dir"]),
+                         (2, os.path.relpath(self.task_file("make", "attempt-2"), run.path)))
+        self.assertEqual(second["paths"], ["src/a.txt", "src/more.txt", "src/notes.txt"])
+        self.assertEqual(second["base"], first["base"])              # nothing was accepted between
+        self.assertNotEqual(second["candidate"], first["candidate"])
+        self.assertEqual(second["candidate"],
+                         self.git_out("rev-parse", second["candidate_ref"]))
+        with open(self.task_file("make", "failed.patch")) as fh:
+            second_patch = fh.read()
+        for path in ("src/a.txt", "src/more.txt", "src/notes.txt"):  # the recovered work as well
+            self.assertIn(path, second_patch)
+        self.assertNotEqual(second_patch, first_patch)
+        self.assertEqual(tree_digest(attempt_one), digest)      # the recovered attempt is untouched
+        self.assertEqual(self.the_run().integrity_check(), [])
+        self.check_invariants()
+
+    def test_an_interrupted_set_aside_keeps_the_record(self):
+        """fail: recovery leaves the record alone (FAIL-14, across a crash in the set-aside)"""
+        for point in ("set-aside:before-restore", "restore:after-removals"):
+            with self.subTest(point=point):
+                self.setUp()
+                self.workflow(ONE.replace('outputs = ["src/a.txt"]', 'outputs = ["src/a.txt"]\n'
+                                          'writes = ["src/**"]\nmax_attempts = 1'))
+                self.script([{"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"},
+                              "answer": done()}])
+
+                def hook(where, point=point):
+                    if where == point:
+                        raise Killed(where)
+                self.cli.CRASH = hook
+                with self.assertRaises(Killed):
+                    self.start()
+                self.cli.CRASH = None
+
+                # The restore is finished by the reconciler, so the step is replayed against a
+                # work tree that no longer holds the work. The record must survive that.
+                self.assertEqual(self.resume(), 2, self.output)
+                kept = read_record(self, "make")
+                self.assertEqual(kept["paths"], ["src/a.txt", "src/notes.txt"])
+                self.assertNotEqual(kept["candidate"], kept["base"])
+                self.assertEqual(kept["candidate"], self.git_out("rev-parse", kept["candidate_ref"]))
+                self.assertEqual(self.the_run().integrity_check(), [])
+                self.check_invariants()
+                # The patch is still the whole work: applying it rebuilds the pinned candidate.
+                git(self.root, "apply", self.task_file("make", "failed.patch"))
+                git(self.root, "add", "-A")
+                self.assertEqual(self.git_out("write-tree"), kept["candidate"])
+                git(self.root, "reset", "-q", "--hard")
+                self.doCleanups()
+
+    def test_migration_does_not_lose_the_acceptance_boundary(self):
+        """fail: migration does not lose the acceptance boundary (FAIL-16)"""
+        self.workflow(ONE.replace("gate =", "max_attempts = 1\ngate =")
+                      + '[[task]]\nid = "look"\ntype = "human"\nverifies = "make"\n' + '''
+[[task]]
+id = "other"
+type = "implement"
+prompt = "Independent."
+outputs = ["other/o.txt"]
+gate = ["true"]
+''')
+        self.script([GOOD, {"write": {"other/o.txt": "o\n"}, "answer": done()}])
+        self.assertEqual(self.start(), 255)
+        self.assertEqual(self.runner("reject", "latest", "look", "-m", "Not like this.",
+                                     "-C", self.root), 0, self.output)
+        self.assertEqual(self.resume(), 255, self.output)      # blocked: a person is needed
+        self.assertEqual((self.status("make"), self.status("other")), ("blocked", "accepted"))
+        published = make_legacy(self, "make")
+
+        derived = read_record(self, "make")
+        self.assertEqual(derived, dict(published, at=None))          # only the timestamp is lost
+        self.assertFalse(os.path.exists(self.task_file("make", "set-aside.json")))   # a read only
+        self.assertEqual(self.the_run().integrity_check(), [])
+        accepted = self.git_out("rev-parse", "HEAD")
+        self.assertNotEqual(derived["head"], accepted)               # not the later tip
+        self.assertEqual(derived["head"], self.the_run().info["base_commit"])
+        self.assertEqual(self.git_out("rev-parse", derived["head"] + "^{tree}"), derived["base"])
+        # The acceptance the boundary exists to catch is inside <head>..HEAD, not before it.
+        self.assertIn(accepted, self.git_out("rev-list", derived["head"] + "..HEAD").splitlines())
+        trailers = gitops.Git(self.root).trailers(accepted)
+        self.assertEqual((trailers["Run"], trailers["Task"]),
+                         (self.the_run().state["run_id"], "other"))
+
     def test_environment_failures_use_no_attempts(self):
         """FAIL-06: a missing binary is rejected before any producer attempt or run exists."""
         self.workflow(ONE.replace('type = "implement"', 'type = "implement"\nagent = "ghost"')
@@ -816,6 +949,79 @@ def tree_digest(path):
                 digest.update(os.path.relpath(os.path.join(dirpath, name), path).encode() + b"\0"
                               + fh.read())
     return digest.hexdigest()
+
+
+class SetAsideRecord(EngineCase):
+    """What `set-aside.json` holds, what survives a replan, and what an old run derives to."""
+
+    def revised(self, tasks):
+        """A revised workflow outside the repository, so the tree stays clean for replan."""
+        header = self.HEADER.format(defaults="", python=sys.executable,
+                                    agent=os.path.join(os.path.dirname(__file__),
+                                                       "fake_agent.py")).replace("'", '"')
+        header = header.replace('name = "demo"', 'name = "demo"\nroot = ' + json.dumps(self.root))
+        path = os.path.join(self.side, "revised.toml")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(header + tasks)
+        return path
+
+    def test_replan_keeps_the_way_back_to_set_aside_work(self):
+        """run: replan keeps the way back to set-aside work (RUN-18, the record)"""
+        self.workflow(ONE.replace('outputs = ["src/a.txt"]', 'outputs = ["src/a.txt"]\n'
+                                  'writes = ["src/**"]\nmax_attempts = 1'))
+        self.script([{"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"},
+                      "answer": done()}])
+        self.assertEqual(self.start(), 2)
+        before = read_record(self, "make")
+        self.assertEqual(before["paths"], ["src/a.txt", "src/notes.txt"])
+
+        revised = self.revised(ONE.replace('outputs = ["src/a.txt"]', 'outputs = ["src/a.txt"]\n'
+                                           'writes = ["src/**"]\nmax_attempts = 1')
+                               .replace("Make src/a.txt say good.", "Make src/a.txt say good, "
+                                        "and keep the notes."))
+        self.assertEqual(self.runner("replan", "latest", "--workflow", revised, "-C", self.root),
+                         0, self.output)
+        st = self.the_run().state["tasks"]["make"]
+        self.assertEqual(st["status"], "pending")
+        self.assertNotIn("base", st)              # the state's way back went with the reduction
+        self.assertNotIn("candidate", st)
+        after = read_record(self, "make")         # the file in the task directory is still there
+        self.assertEqual(after, before)
+        self.assertEqual((after["attempt"], after["base"], after["candidate"], after["paths"]),
+                         (1, before["base"], before["candidate"], ["src/a.txt", "src/notes.txt"]))
+        self.assertEqual(after["candidate"], self.git_out("rev-parse", after["candidate_ref"]))
+        self.assertTrue(os.path.exists(self.task_file("make", "failed.patch")))
+        self.assertEqual(self.the_run().integrity_check(), [])
+
+    def test_an_old_run_set_aside_on_the_starting_commit_recovers(self):
+        """run: an old run set aside on the starting commit recovers (RUN-21, the derivation)"""
+        self.workflow(ONE.replace("gate =", "max_attempts = 1\ngate ="))
+        self.script([BAD])
+        self.assertEqual(self.start(), 2)
+        start_commit = self.the_run().info["base_commit"]
+        self.assertEqual(self.git_out("rev-parse", "HEAD"), start_commit)   # nothing accepted yet
+        published = make_legacy(self, "make")
+
+        # The owner edits the brief and commits it, which `replan` requires: HEAD is no longer the
+        # commit the work was set aside on, so the whole-tree rule would refuse from here.
+        with open(self.wf_path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.write("wf.toml", text.replace("Make src/a.txt say good.",
+                                           "Make src/a.txt say good, politely."))
+        self.commit()
+        self.assertNotEqual(self.git_out("rev-parse", "HEAD"), start_commit)
+        self.assertNotEqual(published["base"], self.git_out("rev-parse", "HEAD^{tree}"))
+
+        derived = read_record(self, "make")
+        self.assertEqual(derived, dict(published, at=None))
+        self.assertEqual(derived["head"], start_commit)          # the starting commit, not None
+        self.assertEqual(self.git_out("rev-parse", derived["head"] + "^{tree}"), derived["base"])
+        self.assertEqual(self.git_out("rev-list", derived["head"] + "..HEAD").splitlines(),
+                         [self.git_out("rev-parse", "HEAD")])    # only the owner's brief commit
+
+        # A branch that no longer holds the set-aside commit has no head to derive at all.
+        git(self.root, "reset", "-q", "--hard", start_commit + "~1")
+        self.assertIsNone(read_record(self, "make")["head"])
 
 
 class Killed(Exception):

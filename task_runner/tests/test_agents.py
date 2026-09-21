@@ -106,6 +106,12 @@ class CommandAdapter(unittest.TestCase):
                 "if k.startswith('TASK_RUNNER_')}))")
         os.environ["TASK_RUNNER_RUN_DIR"] = "/inherited/from/an/outer/run"
         self.addCleanup(os.environ.pop, "TASK_RUNNER_RUN_DIR", None)
+        # The runner's own record location (`--runs-dir`) is not for its children either: a gate
+        # that runs a runner of its own would otherwise write into this run's record.
+        previous = os.environ.get("TASK_RUNNER_RUNS_DIR")
+        os.environ["TASK_RUNNER_RUNS_DIR"] = "/the/outer/runs"
+        self.addCleanup(lambda: os.environ.pop("TASK_RUNNER_RUNS_DIR", None) if previous is None
+                        else os.environ.__setitem__("TASK_RUNNER_RUNS_DIR", previous))
         self.assertEqual(self.call(code).structured,
                          {"TASK_RUNNER_RUN": "run-uuid", "TASK_RUNNER_TASK": "make"})
         env = agents.agent_env(os.environ, "run-uuid", "report", run_dir="/the/run")
@@ -113,7 +119,8 @@ class CommandAdapter(unittest.TestCase):
         gate_env = checks.command_env(dict(os.environ, ANTHROPIC_API_KEY="k", OPENAI_API_KEY="k",
                                            GH_TOKEN="t", PATH="/bin"), "run-uuid", "make")
         self.assertEqual(gate_env["TASK_RUNNER_TASK"], "make")
-        for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN", "TASK_RUNNER_RUN_DIR"):
+        for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN", "TASK_RUNNER_RUN_DIR",
+                     "TASK_RUNNER_RUNS_DIR"):
             self.assertNotIn(name, gate_env)
         self.assertEqual(gate_env["PATH"], "/bin")
 

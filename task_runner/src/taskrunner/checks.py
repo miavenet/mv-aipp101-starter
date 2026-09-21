@@ -12,8 +12,11 @@ AUTH_NAMES = ("GH_TOKEN", "GITHUB_TOKEN", "AWS_BEARER_TOKEN_BEDROCK", "TASK_RUNN
 
 
 def command_env(base, run_id="", task_id=""):
+    # TASK_RUNNER_RUNS_DIR names THIS runner's record. A command that itself runs a runner (this
+    # project's own test suite does) must not inherit it and write into that record.
     env = {k: v for k, v in base.items()
-           if not k.startswith(AUTH_PREFIXES) and k not in AUTH_NAMES}
+           if not k.startswith(AUTH_PREFIXES) and k not in AUTH_NAMES
+           and k != "TASK_RUNNER_RUNS_DIR"}
     if run_id:
         env.update(TASK_RUNNER_RUN=run_id, TASK_RUNNER_TASK=task_id)
     return env

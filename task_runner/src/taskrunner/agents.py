@@ -139,7 +139,8 @@ def make(name, profile):
 
 def agent_env(base, run_id, task_id, run_dir=None):
     """The environment of an agent call. The record's path goes only to types that ask for it."""
-    env = {k: v for k, v in base.items() if k != "TASK_RUNNER_RUN_DIR"}
+    env = {k: v for k, v in base.items()
+           if k not in ("TASK_RUNNER_RUN_DIR", "TASK_RUNNER_RUNS_DIR")}   # see checks.command_env
     env.update(TASK_RUNNER_RUN=run_id, TASK_RUNNER_TASK=task_id)
     if run_dir:
         env["TASK_RUNNER_RUN_DIR"] = run_dir

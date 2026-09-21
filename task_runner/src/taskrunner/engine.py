@@ -1187,6 +1187,32 @@ def recovery_plan(run, engine, git, task_id):
             "expected": git.tree_with(tree, rec["candidate"], paths)}
 
 
+def _adopt_tip(run, git, task_id):
+    """The pause expectation `retry` re-records, so that `resume` does not refuse the commit the
+    runbook told the owner to make: the branch tip and the clean work tree as they are now. None
+    when no pause expectation was recorded, and so nothing is adopted. A refusal writes nothing:
+    `Refused` is raised when the branch or the tree moved in a way the owner's own commits cannot explain."""
+    expect = run.state.get("expect")
+    if not expect:
+        return None
+    tip, head = expect["tip"], git.head()
+    why = None
+    if git.run("merge-base", "--is-ancestor", tip, head, check=False).returncode:
+        why = f"the run branch is no longer a descendant of {_short(tip)}, where the run paused"
+    elif not git.is_clean():
+        why = "the work tree has uncommitted changes"
+    else:
+        runner_made = _runner_commit_since(git, tip, head)
+        if runner_made:
+            why = (f"commit {_short(runner_made[0])}, made since the run paused, carries a Run: "
+                   "trailer, so a runner made it")
+    if why:
+        raise Refused(f"'{task_id}' cannot be retried as the run stands: {why}. Nothing was "
+                      "changed; put the branch and the work tree back as they were, then "
+                      "`runner resume`.")
+    return {"tip": head, "tree": git.snapshot(run.index_file)}
+
+
 def retry(run, engine, git, task_id, apply_patch=False):
     """Fresh attempts for a failed or blocked task, or for a pending producer that still has
     set-aside work (a replan resets a blocked producer to pending). With `apply_patch` the work is
@@ -1215,7 +1241,10 @@ def retry(run, engine, git, task_id, apply_patch=False):
         plan = recovery_plan(run, engine, git, task_id)            # raises Refused: C1-C5
         if plan is None:                                    # the attempt changed nothing
             raise Refused(f"'{task_id}' has no set-aside patch to apply")
+    adopted = _adopt_tip(run, git, task_id)
     # Every check has passed: from here on the retry writes.
+    if adopted:
+        state["expect"] = adopted
     if plan:
         rec = plan["record"]
         path = os.path.join(run.task_dir(task_id), "set-aside.json")

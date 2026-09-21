@@ -1779,5 +1779,122 @@ gate = ["false"]
 
 
 
+class RetryAdoptsTip(EngineCase):
+    """`retry` re-records the pause expectation over the owner's own commits, so that `resume`
+    does not refuse the commit the runbook told the owner to make; and refuses, writing nothing,
+    when the branch or the tree moved in a way those commits cannot explain (G1)."""
+
+    def test_an_unrelated_commit_does_not_block_recovery(self):
+        """fail: an unrelated commit does not block recovery (FAIL-09, through retry and resume)"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        paused = self.the_run().state["expect"]
+        self.assertEqual(paused["tip"], self.git_out("rev-parse", "HEAD"))
+
+        # The owner commits a file the set-aside work never touched; no replan.
+        self.write("notes/owner.txt", "the owner's own\n")
+        self.commit()
+        tip = self.git_out("rev-parse", "HEAD")
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         0, self.output)
+        run = self.the_run()
+        self.assertEqual(run.state["expect"], {"tip": tip,
+                                               "tree": self.git_out("rev-parse", "HEAD^{tree}")})
+        self.assertNotEqual(run.state.get("last_tip"), tip)      # no acceptance happened
+        self.assertEqual(run.state["tasks"]["make"]["recover"]["attempt"], 1)
+
+        # `resume` reconciles instead of refusing the moved branch, the work is put back, and
+        # the next attempt runs on it.
+        self.script([{"write": {"src/a.txt": "good\n"}, "answer": done()}])
+        self.assertEqual(self.resume(), 0, self.output)
+        self.assertNotIn("branch tip changed", self.output)
+        self.assertEqual(self.status("make"), "accepted")
+        self.assertTrue(os.path.isdir(self.task_file("make", "attempt-2")))
+        self.assertEqual(self.git_out("show", "HEAD:src/notes.txt"), "kept work")
+        self.assertEqual(self.git_out("show", "HEAD:src/a.txt"), "good")
+        self.assertEqual(self.git_out("show", "HEAD:notes/owner.txt"), "the owner's own")
+        self.assertEqual(self.git_out("rev-parse", "HEAD^"), tip)
+        self.check_invariants()
+
+    def test_a_clean_retry_adopts_the_tip_too(self):
+        """`retry` without the flag adopts the owner's commit as well, so the clean row works"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        self.write("notes/owner.txt", "the owner's own\n")
+        self.commit()
+        tip = self.git_out("rev-parse", "HEAD")
+        self.assertEqual(self.runner("retry", "latest", "make", "-C", self.root), 0, self.output)
+        self.assertEqual(self.the_run().state["expect"]["tip"], tip)
+        self.script([{"write": {"src/a.txt": "good\n"}, "answer": done()}])
+        self.assertEqual(self.resume(), 0, self.output)
+        self.assertEqual(self.status("make"), "accepted")
+        self.assertFalse(os.path.exists(os.path.join(self.root, "src/notes.txt")))
+        self.check_invariants()
+
+    def test_no_pause_expectation_adopts_nothing(self):
+        """With no pause expectation recorded, `retry` neither adopts nor refuses on its account"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        run = self.the_run()
+        run.state["expect"] = None
+        run.save()
+        self.write("notes/owner.txt", "the owner's own\n")
+        self.commit()
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         0, self.output)
+        self.assertIsNone(self.the_run().state["expect"])
+
+    def refused(self, why, *flags):
+        """`retry` refuses with the adoption wording and changes nothing."""
+        expect = self.the_run().state["expect"]
+        before = untouched_digest(self)
+        self.assertEqual(self.runner("retry", "latest", "make", *flags, "-C", self.root), 2)
+        self.assertIn(f"'make' cannot be retried as the run stands: {why}. Nothing was changed; "
+                      "put the branch and the work tree back as they were, then `runner resume`.",
+                      self.output)
+        self.assertEqual(untouched_digest(self), before)
+        self.assertEqual(self.the_run().state["expect"], expect)   # the expectation stands
+        self.assertEqual(self.status("make"), "failed")
+
+    def test_a_dirty_tree_is_not_adopted(self):
+        """fail: an unrelated commit does not block recovery (FAIL-09: uncommitted edits refuse)"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        self.write("notes/owner.txt", "the owner's own\n")
+        self.commit()
+        self.write("notes/owner.txt", "not committed\n")
+        for flags in (("--apply-patch",), ()):
+            with self.subTest(flags=flags):
+                self.refused("the work tree has uncommitted changes", *flags)
+
+    def test_a_moved_branch_is_not_adopted(self):
+        """fail: an unrelated commit does not block recovery (FAIL-09: a rewritten branch refuses)"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        paused = self.the_run().state["expect"]["tip"]
+        git(self.root, "commit", "-q", "--amend", "--allow-empty", "-m", "rewritten")
+        self.refused(f"the run branch is no longer a descendant of {paused[:7]}, where the run "
+                     "paused")
+
+    def test_a_runner_made_commit_is_not_adopted(self):
+        """fail: an unrelated commit does not block recovery (FAIL-09: a `Run:` trailer refuses)"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        self.write("notes/owner.txt", "the owner's own\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", "looks like the runner's\n\nRun: somewhere-else")
+        made = self.git_out("rev-parse", "HEAD")
+        self.write("notes/later.txt", "the owner's own\n")
+        self.commit()
+        self.refused(f"commit {made[:7]}, made since the run paused, carries a Run: trailer, so a "
+                     "runner made it")
+
+
 if __name__ == "__main__":
     unittest.main()

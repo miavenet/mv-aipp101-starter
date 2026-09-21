@@ -9,7 +9,7 @@ import subprocess
 import sys
 import unittest
 
-from helpers import RUNNER, RepoCase, git, run_cli
+from helpers import RUNNER, EngineCase, RepoCase, done, git, run_cli
 
 WORKFLOW = """
 name = "demo"
@@ -271,6 +271,61 @@ class Runs(RepoCase):
         self.assertIn(f"pruned  {deleted}", res.stdout)
         self.assertIn(f"kept    {unfinished}", res.stdout)
 
+
+
+class RetryLines(EngineCase):
+    """`runner retry` says which of three things it did (G1): the set-aside work queued to be put
+    back, a clean start that leaves the set-aside work in failed.patch, or a plain clean start."""
+
+    TASK = """
+[[task]]
+id = "make"
+type = "implement"
+prompt = "Make src/a.txt say good."
+outputs = ["src/a.txt"]
+writes = ["src/**"]
+max_attempts = 1
+gate = ["grep -q good src/a.txt"]
+"""
+
+    def retry(self, *flags):
+        res = run_cli("retry", "latest", "make", *flags, "-C", self.root)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        return res.stdout
+
+    def test_retry_names_what_it_queued(self):
+        self.workflow(self.TASK)
+        self.script([{"write": {"src/a.txt": "bad\n"}, "answer": done()}])
+        self.assertEqual(self.start(), 2)
+        name = self.the_run().name
+        self.assertEqual(self.retry("--apply-patch"),
+                         "make: fresh attempts, continuing from the set-aside work of attempt 1. "
+                         f"Continue with: runner resume {name}\n")
+        # Retried again without the flag: the queue is cancelled, and the line says so.
+        self.assertEqual(self.retry(),
+                         "make: fresh attempts, starting clean. The set-aside work of attempt 1 "
+                         "stays in failed.patch and will not be put back. Continue with: runner "
+                         f"resume {name}\n")
+        self.assertNotIn("recover", self.the_run().state["tasks"]["make"])
+
+    def test_retry_without_set_aside_work_starts_clean(self):
+        self.workflow(self.TASK)
+        self.script([{"answer": {"outcome": "blocked", "summary": "", "responses": [],
+                                 "blocked_reason": "Nothing to do."}}])
+        self.assertEqual(self.start(), 255)
+        self.assertEqual(self.retry(), "make: fresh attempts, starting clean. Continue with: "
+                                       f"runner resume {self.the_run().name}\n")
+
+    def test_a_refused_retry_prints_the_refusal_only(self):
+        self.workflow(self.TASK)
+        self.script([{"write": {"src/a.txt": "bad\n"}, "answer": done()}])
+        self.assertEqual(self.start(), 2)
+        self.write("src/a.txt", "the owner's own\n")
+        self.commit()
+        res = run_cli("retry", "latest", "make", "--apply-patch", "-C", self.root)
+        self.assertEqual(res.returncode, 2)
+        self.assertEqual(res.stdout, "")
+        self.assertIn("these paths changed since it was set aside: src/a.txt", res.stderr)
 
 if __name__ == "__main__":
     unittest.main()

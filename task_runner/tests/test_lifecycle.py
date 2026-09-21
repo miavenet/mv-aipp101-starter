@@ -1357,6 +1357,287 @@ class SetAsideRecord(EngineCase):
         self.assertIsNone(read_record(self, "make")["head"])
 
 
+WIDE = ONE.replace('outputs = ["src/a.txt"]',
+                   'outputs = ["src/a.txt"]\nwrites = ["src/**"]\nmax_attempts = 1')
+WORK = {"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"}, "answer": done()}
+OTHER = '''
+[[task]]
+id = "other"
+type = "implement"
+prompt = "Independent."
+outputs = ["other/o.txt"]
+gate = ["true"]
+'''
+
+
+def events(case):
+    with open(os.path.join(case.the_run().path, "events.jsonl"), encoding="utf-8") as fh:
+        return [json.loads(line) for line in fh]
+
+
+class RetryRecovery(EngineCase):
+    """`retry` accepts a pending producer that still has set-aside work, queues its recovery with
+    `--apply-patch`, cancels it without the flag, and writes nothing when it refuses (G1)."""
+
+    def test_set_aside_work_survives_a_replan(self):
+        """fail: set-aside work survives a replan (FAIL-08, the retry)"""
+        self.workflow(WIDE)
+        self.script([{"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"},
+                      "answer": {"outcome": "blocked", "summary": "", "responses": [],
+                                 "blocked_reason": "The brief contradicts the gate."}}])
+        self.assertEqual(self.start(), 255)
+        self.assertEqual(self.status("make"), "blocked")
+        rec = read_record(self, "make")
+        attempt_one = self.task_file("make", "attempt-1")
+        digest = tree_digest(attempt_one)
+        with open(self.task_file("make", "failed.patch"), "rb") as fh:
+            patch = fh.read()
+
+        # The owner edits the brief, commits it on the run branch, and replans: the task's
+        # definition changed, so it is reset to pending.
+        with open(self.wf_path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.write("wf.toml", text.replace("Make src/a.txt say good.",
+                                           "Make src/a.txt say good, and keep the notes."))
+        self.commit()
+        self.assertEqual(self.runner("replan", "latest", "-C", self.root), 0, self.output)
+        self.assertEqual(self.status("make"), "pending")
+        self.assertNotIn("base", self.the_run().state["tasks"]["make"])
+
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         0, self.output)
+        run = self.the_run()
+        self.assertEqual(self.output,
+                         "make: fresh attempts, continuing from the set-aside work of attempt 1. "
+                         f"Continue with: runner resume {run.name}\n")
+        st = run.state["tasks"]["make"]
+        self.assertEqual(st["status"], "pending")
+        self.assertEqual(st["recover"], {"from": "set-aside", "attempt": 1,
+                                         "candidate": rec["candidate"]})
+        self.assertNotIn("apply_patch", st)
+        requested = [e for e in events(self) if e["event"] == "recover-requested"]
+        self.assertEqual([(e["task"], e["attempt"], e["files"]) for e in requested],
+                         [("make", 1, 2)])
+        self.assertEqual(read_record(self, "make"), rec)
+        self.assertEqual(tree_digest(attempt_one), digest)      # no finished attempt changed
+        with open(self.task_file("make", "failed.patch"), "rb") as fh:
+            self.assertEqual(fh.read(), patch)
+        self.assertFalse(os.path.exists(self.task_file("make", "attempt-2")))
+        self.assertEqual(run.integrity_check(), [])
+        self.check_invariants()
+
+    def test_conflicting_paths_refuse_recovery(self):
+        """fail: conflicting paths refuse recovery (FAIL-10, through retry)"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        self.write("src/a.txt", "the owner's own\n")
+        self.write("src/elsewhere.txt", "unrelated\n")
+        self.commit()
+        for how in ("the record on disk", "a derived record"):
+            with self.subTest(record=how):
+                if how == "a derived record":
+                    make_legacy(self, "make")
+                before = untouched_digest(self)
+                self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch",
+                                             "-C", self.root), 2)
+                self.assertIn("the set-aside work of 'make' (attempt 1) no longer applies: these "
+                              "paths changed since it was set aside: src/a.txt. Nothing was "
+                              "changed. Settle them, or retry without --apply-patch to start "
+                              "clean.", self.output)
+                # The work tree, the index, state.json, integrity.json, the event log,
+                # failed.patch and the task directory all lie under the digest.
+                self.assertEqual(untouched_digest(self), before)
+                self.assertEqual(self.status("make"), "failed")
+        self.assertFalse(os.path.exists(self.task_file("make", "set-aside.json")))
+        self.assertEqual(self.the_run().integrity_check(), [])
+        self.check_invariants()
+
+    def test_a_derived_record_is_published_by_an_accepted_retry(self):
+        """fail: a derived record is published only once `retry --apply-patch` is accepted"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        published = make_legacy(self, "make")
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         0, self.output)
+        self.assertEqual(self.read_json("make", "set-aside.json"), dict(published, at=None))
+        run = self.the_run()
+        self.assertEqual(run.integrity_check(), [])
+        self.assertEqual(run.state["intents"], [])
+        self.assertEqual(run.state["tasks"]["make"]["recover"]["attempt"], 1)
+
+    def test_accepted_work_since_refuses_recovery(self):
+        """fail: accepted work since refuses recovery (FAIL-11, through retry)"""
+        made = {"match": "Independent", "write": {"other/o.txt": "o\n"}, "answer": done()}
+        failing = ONE.replace("gate =", "max_attempts = 1\ngate =")
+
+        # An acceptance after the set-aside.
+        self.workflow(failing + OTHER)
+        self.script([BAD, made])
+        self.assertEqual(self.start(), 2)
+        accepted = self.git_out("rev-parse", "HEAD")
+        before = untouched_digest(self)
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         2)
+        self.assertIn("the set-aside work of 'make' (attempt 1) cannot be put back: other work "
+                      f"was accepted since (commit {accepted[:7]} of task 'other'). Nothing was "
+                      "changed. Retry without --apply-patch to start clean.", self.output)
+        self.assertEqual(untouched_digest(self), before)
+        self.assertEqual(self.status("make"), "failed")
+        # The way it offers is open: without the flag the task starts clean.
+        self.assertEqual(self.runner("retry", "latest", "make", "-C", self.root), 0, self.output)
+        self.assertNotIn("recover", self.the_run().state["tasks"]["make"])
+        self.check_invariants()
+
+        # A `--reopen` revert after the set-aside.
+        self.doCleanups()
+        self.setUp()
+        self.workflow(OTHER + failing)
+        self.script([made, BAD])
+        self.assertEqual(self.start(), 2)
+        accepted = self.git_out("rev-parse", "HEAD")
+        revised = revised_workflow(self, OTHER.replace("other/o.txt", "other/renamed.txt")
+                                   + failing)
+        self.assertEqual(self.runner("replan", "latest", "--workflow", revised, "--reopen", "other",
+                                     "-C", self.root), 0, self.output)
+        revert = self.git_out("rev-parse", "HEAD")
+        before = untouched_digest(self)
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         2)
+        self.assertIn("the set-aside work of 'make' (attempt 1) cannot be put back: accepted "
+                      f"work was reverted since (commit {revert[:7]} reverts {accepted[:7]}). "
+                      "Nothing was changed. Retry without --apply-patch to start clean.",
+                      self.output)
+        self.assertEqual(untouched_digest(self), before)
+        self.check_invariants()
+
+    def test_an_invalid_queued_recovery_can_be_cancelled(self):
+        """fail: an invalid queued recovery can be cancelled (FAIL-15, the cancellation)"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         0, self.output)
+        queued = self.the_run().state["tasks"]["make"]["recover"]
+
+        # A replan narrows `writes` away from src/notes.txt, which the queued work changed.
+        narrow = revised_workflow(self, WIDE.replace('writes = ["src/**"]',
+                                                     'writes = ["src/a.txt"]'))
+        self.assertEqual(self.runner("replan", "latest", "--workflow", narrow, "-C", self.root),
+                         0, self.output)
+        self.assertEqual(self.status("make"), "pending")
+        # The request is carried across the replan (task 8 of the design makes `replan` do this);
+        # it is put back here so that what is cancelled below is a queued, invalid request.
+        run = self.the_run()
+        run.state["tasks"]["make"]["recover"] = queued
+        run.save()
+        self.assertEqual(engine.queued_recovery(self.the_run(), gitops.Git(self.root), "make"),
+                         queued)
+        with self.assertRaises(engine.Refused) as caught:
+            plan_for(self, "make")                              # the request is no longer valid
+        self.assertIn("which 'make' may no longer write", str(caught.exception))
+        self.assertEqual(self.the_run().state["tasks"]["make"]["recover"], queued)  # still queued
+
+        # `retry` without the flag is accepted on the pending producer and clears the queue.
+        with open(self.task_file("make", "failed.patch"), "rb") as fh:
+            patch = fh.read()
+        self.assertEqual(self.runner("retry", "latest", "make", "-C", self.root), 0, self.output)
+        run = self.the_run()
+        self.assertEqual(self.output,
+                         "make: fresh attempts, starting clean. The set-aside work of attempt 1 "
+                         "stays in failed.patch and will not be put back. Continue with: runner "
+                         f"resume {run.name}\n")
+        st = run.state["tasks"]["make"]
+        self.assertEqual(st["status"], "pending")
+        self.assertNotIn("recover", st)
+        self.assertNotIn("apply_patch", st)
+        self.assertEqual(events(self)[-1]["event"], "retry")     # no recovery requested
+        with open(self.task_file("make", "failed.patch"), "rb") as fh:
+            self.assertEqual(fh.read(), patch)
+
+        # The next attempt starts from the accepted tree, with nothing put back.
+        self.script([{"write": {"src/a.txt": "good\n"}, "answer": done()}])
+        self.assertEqual(self.resume(), 0, self.output)
+        self.assertNotIn("set aside and is back", self.prompt(1))
+        self.assertNotIn("Earlier work of this task", self.prompt(1))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "src/notes.txt")))
+        self.check_invariants()
+
+    def test_a_queued_recovery_is_cancelled_without_a_replan(self):
+        """fail: an invalid queued recovery can be cancelled (FAIL-15, the queue itself)"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         0, self.output)
+        self.assertEqual(self.status("make"), "pending")
+        self.assertEqual(self.runner("retry", "latest", "make", "-C", self.root), 0, self.output)
+        self.assertIn("The set-aside work of attempt 1 stays in failed.patch", self.output)
+        self.assertNotIn("recover", self.the_run().state["tasks"]["make"])
+        self.script([{"write": {"src/a.txt": "good\n"}, "answer": done()}])
+        self.assertEqual(self.resume(), 0, self.output)
+        self.assertNotIn("set aside and is back", self.prompt(1))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "src/notes.txt")))
+        self.check_invariants()
+
+    def test_a_legacy_queued_request_is_read_and_cancelled(self):
+        """An older runner's `apply_patch: true` is read as a queued recovery, and `retry`
+        without the flag cancels it like any other"""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        rec = read_record(self, "make")
+        run = self.the_run()
+        run.state["tasks"]["make"].update(status="pending", apply_patch=True)
+        run.save()
+        git_ = gitops.Git(self.root)
+        self.assertEqual(engine.queued_recovery(self.the_run(), git_, "make"),
+                         {"from": "set-aside", "attempt": 1, "candidate": rec["candidate"]})
+        self.assertEqual(self.runner("retry", "latest", "make", "-C", self.root), 0, self.output)
+        self.assertNotIn("apply_patch", self.the_run().state["tasks"]["make"])
+        self.assertIsNone(engine.queued_recovery(self.the_run(), git_, "make"))
+
+    def test_a_task_without_set_aside_work_keeps_the_old_refusals(self):
+        """`retry` of a pending task with no set-aside record keeps today's refusal word for word,
+        and an attempt that changed nothing has no patch to put back"""
+        self.workflow(ONE)
+        self.script([{"answer": {"outcome": "blocked", "summary": "", "responses": [],
+                                 "blocked_reason": "Nothing to do."}}])
+        self.assertEqual(self.start(), 255)
+        self.assertEqual(read_record(self, "make")["paths"], [])  # the attempt changed nothing
+        before = untouched_digest(self)
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         2)
+        self.assertIn("'make' has no set-aside patch to apply", self.output)
+        self.assertEqual(untouched_digest(self), before)
+        self.assertEqual(self.runner("retry", "latest", "make", "-C", self.root), 0, self.output)
+        self.assertIn("make: fresh attempts, starting clean. Continue with", self.output)
+
+        # A pending producer that never had set-aside work: an accepted one, reopened.
+        self.doCleanups()
+        self.setUp()
+        failing = ONE.replace("gate =", "max_attempts = 1\ngate =")
+        self.workflow(OTHER + failing)
+        self.script([{"match": "Independent", "write": {"other/o.txt": "o\n"}, "answer": done()},
+                     BAD])
+        self.assertEqual(self.start(), 2)
+        revised = revised_workflow(self, OTHER.replace("other/o.txt", "other/renamed.txt")
+                                   + failing)
+        self.assertEqual(self.runner("replan", "latest", "--workflow", revised, "--reopen", "other",
+                                     "-C", self.root), 0, self.output)
+        self.assertEqual(self.status("other"), "pending")
+        before = untouched_digest(self)
+        for flags in ((), ("--apply-patch",)):
+            with self.subTest(flags=flags):
+                self.assertEqual(self.runner("retry", "latest", "other", *flags, "-C", self.root),
+                                 2)
+                self.assertEqual(self.output,
+                                 "runner: 'other' is pending; only a failed or blocked task "
+                                 "is retried\n")
+        self.assertEqual(untouched_digest(self), before)
+
+
 class Killed(Exception):
     pass
 

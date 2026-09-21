@@ -317,13 +317,16 @@ class Engine(ProviderRouting, Panels):
         if base != self.git.tree_of("HEAD") or not self.git.is_clean():
             raise EngineStop(f"the work tree is not at a clean accepted state, so '{tid}' cannot "
                              "start: " + ", ".join(self.git.dirty_paths()[:10]))
+        queued = queued_recovery(self.run, self.git, tid)
+        st.pop("recover", None)
+        st.pop("apply_patch", None)
         self.run.state["active_producer"] = tid
         st.update(status="running", reason="", step="attempt", base=base, candidate=None,
                   attempts_used=0, session_id=None, feedback=None, last_failure=None,
                   final=None, sender=None)
         self.run.save()
         self.pin(f"{tid}/base", base)
-        if st.pop("apply_patch", False):
+        if queued:
             patch = os.path.join(self.run.task_dir(tid), "failed.patch")
             try:
                 self.git.apply_patch(patch)
@@ -1019,6 +1022,19 @@ def set_aside_record(run, git, tid):
             "paths": [p for _s, p, _o, _n in git.changed_paths(base, candidate)]}
 
 
+def queued_recovery(run, git, tid):
+    """The recovery `retry --apply-patch` queued for the task, or None. An older runner queued a
+    bare `apply_patch: true`; it is read as a request for the set-aside work, and the fields it
+    lacks are taken from the task's set-aside record."""
+    st = run.state["tasks"][tid]
+    if st.get("recover"):
+        return st["recover"]
+    if not st.get("apply_patch"):
+        return None
+    rec = set_aside_record(run, git, tid) or {}
+    return {"from": "set-aside", "attempt": rec.get("attempt"), "candidate": rec.get("candidate")}
+
+
 def _config_hash(verifier):
     data = {k: verifier[k] for k in ("id", "kind", "commands", "read_only", "restores",
                                      "timeout_min")}
@@ -1172,7 +1188,12 @@ def recovery_plan(run, engine, git, task_id):
 
 
 def retry(run, engine, git, task_id, apply_patch=False):
-    """Fresh attempts for a failed or blocked task. Attempt numbers continue; nothing is reused."""
+    """Fresh attempts for a failed or blocked task, or for a pending producer that still has
+    set-aside work (a replan resets a blocked producer to pending). With `apply_patch` the work is
+    queued to be put back before the next attempt; without it any queued recovery is cancelled.
+    Attempt numbers continue; nothing is reused. A refusal writes nothing at all.
+    Returns {"recovering": <attempt queued, or None>, "set_aside": <attempt left in failed.patch,
+    or None>}."""
     state = run.state
     if task_id not in engine.tasks:
         raise Refused(f"no task '{task_id}' in this run")
@@ -1182,30 +1203,37 @@ def retry(run, engine, git, task_id, apply_patch=False):
                       + (f": {engine.st(active)['reason']}" if engine.st(active)["reason"] else "")
                       + "), which holds the work tree. Settle that first; nothing was changed")
     st = engine.st(task_id)
-    if st["status"] not in ("failed", "blocked"):
-        raise Refused(f"'{task_id}' is {st['status']}; only a failed or blocked task is retried")
     task = engine.tasks[task_id]
+    rec = set_aside_record(run, git, task_id) if task["kind"] == "produce" else None
+    if st["status"] not in ("failed", "blocked") and not (st["status"] == "pending" and rec):
+        raise Refused(f"'{task_id}' is {st['status']}; only a failed or blocked task is retried")
+    plan = None
     if apply_patch:
         patch = os.path.join(run.task_dir(task_id), "failed.patch")
         if task["kind"] != "produce" or not os.path.exists(patch):
             raise Refused(f"'{task_id}' has no set-aside patch to apply")
-        now = git.tree_of("HEAD")
-        if st.get("base") != now:
-            raise Refused(f"the patch of '{task_id}' was made against tree {st.get('base')}, but "
-                          f"the accepted tree is now {now}: other work was accepted since. Retry "
-                          "without --apply-patch")
-        try:
-            git.apply_patch(patch, check_only=True)
-        except gitops.GitError as exc:
-            raise Refused(f"the patch of '{task_id}' does not apply: {exc}") from exc
+        plan = recovery_plan(run, engine, git, task_id)            # raises Refused: C1-C5
+        if plan is None:                                    # the attempt changed nothing
+            raise Refused(f"'{task_id}' has no set-aside patch to apply")
+    # Every check has passed: from here on the retry writes.
+    if plan:
+        rec = plan["record"]
+        path = os.path.join(run.task_dir(task_id), "set-aside.json")
+        if not os.path.exists(path):                        # a derived record, published now
+            run.publish_decision(path, rec, crash=engine.crash)
     if task["kind"] == "produce":
         st["ledger"] = findings.restart(engine.ledger(task_id))
     st.pop("pending_attempt", None)
     st.pop("pending_protocol_tries", None)
     st.pop("pending_protocol_error", None)
     st.pop("panel", None)
+    st.pop("apply_patch", None)                             # an older runner's request
+    st.pop("recover", None)                                 # without the flag: cancelled
     st.update(status="pending", reason="", final=None, step=None, feedback=None,
-              last_failure=None, session_id=None, decision=None, apply_patch=bool(apply_patch))
+              last_failure=None, session_id=None, decision=None)
+    if plan:
+        st["recover"] = {"from": "set-aside", "attempt": rec["attempt"],
+                         "candidate": rec["candidate"]}
     for other in engine.order:
         ost = engine.st(other)
         verifies = (engine.tasks[other].get("verifies") == task_id or
@@ -1214,8 +1242,13 @@ def retry(run, engine, git, task_id, apply_patch=False):
             ost.update(status="pending", reason="", decision=None)
     state["status"] = "running"
     run.event("retry", task=task_id, apply_patch=bool(apply_patch))
+    if plan:
+        run.event("recover-requested", task=task_id, attempt=rec["attempt"],
+                  files=len(plan["paths"]))
     run.save()
     run.regenerate()
+    left = rec["attempt"] if rec and rec["paths"] and not plan else None
+    return {"recovering": rec["attempt"] if plan else None, "set_aside": left}
 
 
 def resolve(run, engine, fid, decision, note="", who=""):

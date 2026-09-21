@@ -495,12 +495,17 @@ def cmd_retry(args):
         return fail(str(exc))
     with lock:
         try:
-            engine.retry(run, engine.Engine(run, git), git, args.task, args.apply_patch)
+            done = engine.retry(run, engine.Engine(run, git), git, args.task, args.apply_patch)
         except engine.Refused as exc:
             return fail(str(exc))
-    print(f"{args.task}: fresh attempts"
-          + (", continuing from its set-aside work" if args.apply_patch else ", starting clean")
-          + f". Continue with: runner resume {run.name}")
+    if done["recovering"] is not None:
+        how = f", continuing from the set-aside work of attempt {done['recovering']}"
+    elif done["set_aside"] is not None:
+        how = (f", starting clean. The set-aside work of attempt {done['set_aside']} stays in "
+               "failed.patch and will not be put back")
+    else:
+        how = ", starting clean"
+    print(f"{args.task}: fresh attempts{how}. Continue with: runner resume {run.name}")
     return EXIT_OK
 
 

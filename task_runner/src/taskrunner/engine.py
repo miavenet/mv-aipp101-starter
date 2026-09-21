@@ -1057,6 +1057,120 @@ def decide(run, engine, task_id, decision, note, who=""):
     run.regenerate()
 
 
+# -- can the set-aside work still be put back? (G1) ------------------------------------------------
+
+def _short(sha):
+    return sha[:7]
+
+
+def _no_candidate(run, task_id, rec=None):
+    """C4, and the old record nothing is left to derive: the pinned tree cannot be reached, so
+    `failed.patch` and `git apply` are all the owner has left."""
+    rec = rec or {}
+    ref = rec.get("candidate_ref", f"{gitops.REF_PREFIX}{run.name}/{task_id}/set-aside")
+    patch = rec.get("patch", os.path.relpath(os.path.join(run.task_dir(task_id), "failed.patch"),
+                                             run.path))
+    return Refused(f"the candidate tree of '{task_id}' is no longer in this repository ({ref}). "
+                   f"Its complete patch is still at {patch} and can be applied by hand with "
+                   "`git apply`. Nothing was changed.")
+
+
+def _runner_commit_since(git, head, tip):
+    """C3: the oldest commit of `head..tip` that a runner made — an acceptance or a `--reopen`
+    revert — with its trailers. None when only the owner's own commits landed."""
+    for sha in reversed(git.out("rev-list", f"{head}..{tip}").splitlines()):
+        trailers = git.trailers(sha)
+        if "Run" in trailers:
+            return sha, trailers
+    return None
+
+
+def _parents(path):
+    """Every directory a path lies in, deepest first: 'a/b/c.txt' -> ['a/b', 'a']."""
+    parts = path.split("/")[:-1]
+    return ["/".join(parts[:n]) for n in range(len(parts), 0, -1)]
+
+
+def _obstructed(path, entries, directories):
+    """Is `path` blocked by what a tree holds? `ls_tree` lists no directories at all, so a file
+    and a directory of the same name never differ by name: what lies around the path is the only
+    evidence — a directory standing where it goes, or a file on the way to it."""
+    return path in directories or any(parent in entries for parent in _parents(path))
+
+
+def recovery_plan(run, engine, git, task_id):
+    """C1-C5 against the task's set-aside record, whether or not a recovery is queued: the caller
+    decides when to ask. None only when the task has no set-aside work at all — no patch, or a
+    record whose `paths` is empty, which is the attempt that changed nothing. Reads only — the
+    record, the state, the index and the work tree are untouched, whatever it returns. Raises
+    `Refused`, with the owner's message, when the work cannot be put back.
+    Returns {"record": <the record>, "paths": [...], "expected": "<tree>", "base": "<tree>"}."""
+    task = engine.tasks.get(task_id)
+    patch = os.path.join(run.task_dir(task_id), "failed.patch")
+    if not task or task["kind"] != "produce" or not os.path.exists(patch):
+        return None
+    rec = set_aside_record(run, git, task_id)
+    if rec is None:                      # an old run whose state was reduced before this design
+        raise _no_candidate(run, task_id)
+    paths = rec["paths"]
+    if not paths:                        # the attempt changed nothing: there is nothing to put back
+        return None
+    work = f"the set-aside work of '{task_id}' (attempt {rec['attempt']})"
+    if git.pins(run.name).get(rec["candidate_ref"]) != rec["candidate"]:                  # C4
+        raise _no_candidate(run, task_id, rec)
+    head, tree = git.head(), git.tree_of("HEAD")
+    was_on = rec.get("head")            # None in a legacy record whose set-aside commit was lost
+    if was_on:                                                                            # C1
+        if git.run("merge-base", "--is-ancestor", was_on, head, check=False).returncode:
+            raise Refused(f"{work} cannot be put back: the run branch is no longer a descendant "
+                          f"of {_short(was_on)}, where the work was set aside. Nothing was "
+                          "changed.")
+    elif rec["base"] != tree:
+        # A legacy record whose set-aside commit could not be established: C1 and C3 cannot be
+        # evaluated, so today's whole-tree rule stands in their place, word for word.
+        raise Refused(f"the patch of '{task_id}' was made against tree {rec['base']}, but the "
+                      f"accepted tree is now {tree}: other work was accepted since. Retry without "
+                      "--apply-patch")
+    at_base, at_head = git.ls_tree(rec["base"]), git.ls_tree(tree)
+    at_candidate = git.ls_tree(rec["candidate"])
+    # What HEAD still holds once the restore has taken away the paths the work deleted: a
+    # directory the work itself empties does not stand in the way of the file that replaces it.
+    taken_away = {p for p in paths if p not in at_candidate}
+    stays = {p for p in at_head if p not in taken_away}
+    directories = {d for p in stays for d in _parents(p)}
+    moved = []                                                                            # C2
+    for path in paths:
+        if at_head.get(path) != at_base.get(path):
+            moved.append(path)
+        elif path in at_candidate and _obstructed(path, stays, directories):
+            # Nothing is recorded under that name in either tree, and yet the work cannot be put
+            # back: the owner has since committed a directory where the work's own file goes, or
+            # a file where its directory goes. Restoring would quietly take the owner's work with
+            # it, so it is a path that conflicts like any other.
+            moved.append(path)
+    if moved:
+        raise Refused(f"{work} no longer applies: these paths changed since it was set aside: "
+                      + ", ".join(moved) + ". Nothing was changed. Settle them, or retry without "
+                      "--apply-patch to start clean.")
+    runner_made = _runner_commit_since(git, was_on, head) if was_on else None             # C3
+    if runner_made:
+        sha, trailers = runner_made
+        why = (f"accepted work was reverted since (commit {_short(sha)} reverts "
+               f"{_short(trailers['Reverts'])})" if "Reverts" in trailers else
+               f"other work was accepted since (commit {_short(sha)} of task "
+               f"'{trailers.get('Task')}')")
+        raise Refused(f"{work} cannot be put back: {why}. Nothing was changed. Retry without "
+                      "--apply-patch to start clean.")
+    for path in paths:                                                                    # C5
+        as_root = engine.to_root(path)
+        if as_root is None or not patterns.matches_any(task["writes"], as_root):
+            raise Refused(f"{work} cannot be put back: it changed {path}, which '{task_id}' may "
+                          "no longer write. Nothing was changed. Retry without --apply-patch to "
+                          "start clean.")
+    return {"record": rec, "paths": paths, "base": tree,
+            "expected": git.tree_with(tree, rec["candidate"], paths)}
+
+
 def retry(run, engine, git, task_id, apply_patch=False):
     """Fresh attempts for a failed or blocked task. Attempt numbers continue; nothing is reused."""
     state = run.state

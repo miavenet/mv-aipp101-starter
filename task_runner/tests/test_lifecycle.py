@@ -939,6 +939,293 @@ gate = ["true"]
         git(self.root, "reset", "-q", "--hard")
         self.assertEqual(st["status"], "failed")
 
+    def test_an_unrelated_commit_does_not_block_recovery(self):
+        """fail: an unrelated commit does not block recovery (FAIL-09, the check)"""
+        self.workflow(ONE.replace('outputs = ["src/a.txt"]', 'outputs = ["src/a.txt"]\n'
+                                  'writes = ["src/**"]\nmax_attempts = 1'))
+        self.script([{"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"},
+                      "answer": done()}])
+        self.assertEqual(self.start(), 2)
+        set_aside_at = read_record(self, "make")["head"]
+
+        # The owner fixes the brief and commits it, which `replan` requires. It touches none of
+        # the paths the set-aside work changed.
+        with open(self.wf_path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.write("wf.toml", text.replace("Make src/a.txt say good.",
+                                           "Make src/a.txt say good, and keep the notes."))
+        self.commit()
+        plan = plan_for(self, "make")
+        self.assertEqual(plan["paths"], ["src/a.txt", "src/notes.txt"])
+        self.assertEqual(plan["record"]["head"], set_aside_at)
+        self.assertEqual(plan["base"], self.git_out("rev-parse", "HEAD^{tree}"))
+        self.assertNotEqual(plan["record"]["base"], plan["base"])   # the whole tree did move
+
+        # `expected` is what applying the patch by hand produces: the brief commit kept, and the
+        # work of the attempt back on top of it.
+        git(self.root, "apply", self.task_file("make", "failed.patch"))
+        git(self.root, "add", "-A")
+        self.assertEqual(self.git_out("write-tree"), plan["expected"])
+        git(self.root, "reset", "-q", "--hard")
+        self.assertEqual(self.the_run().integrity_check(), [])
+        self.check_invariants()
+
+    def test_conflicting_paths_refuse_recovery(self):
+        """fail: conflicting paths refuse recovery (FAIL-10)"""
+        self.workflow(ONE.replace('outputs = ["src/a.txt"]', 'outputs = ["src/a.txt"]\n'
+                                  'writes = ["src/**"]\nmax_attempts = 1'))
+        self.script([{"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"},
+                      "answer": done()}])
+        self.assertEqual(self.start(), 2)
+
+        # The owner commits one of the work's own paths, and one path the work never touched.
+        self.write("src/a.txt", "the owner's own\n")
+        self.write("src/elsewhere.txt", "unrelated\n")
+        self.commit()
+        refusal = ("the set-aside work of 'make' (attempt 1) no longer applies: these paths "
+                   "changed since it was set aside: src/a.txt. Nothing was changed. Settle them, "
+                   "or retry without --apply-patch to start clean.")
+        for how in ("the record on disk", "a derived record"):
+            with self.subTest(record=how):
+                if how == "a derived record":
+                    make_legacy(self, "make")
+                before = untouched_digest(self)
+                with self.assertRaises(engine.Refused) as caught:
+                    plan_for(self, "make")
+                self.assertEqual(str(caught.exception), refusal)
+                self.assertEqual(untouched_digest(self), before)      # not even a derived record
+        self.assertFalse(os.path.exists(self.task_file("make", "set-aside.json")))
+        self.assertEqual(self.the_run().integrity_check(), [])
+
+        # The owner's own local work is in the tree as well: an edit git has not been told about,
+        # a file it does not track, and a mode change. A refusal leaves every one of them alone.
+        clean = untouched_digest(self)
+        self.write("src/a.txt", "the owner is still editing this\n")
+        self.write("src/scratch.txt", "untracked\n")
+        os.chmod(os.path.join(self.root, "src/elsewhere.txt"), 0o755)
+        dirty = untouched_digest(self)
+        self.assertNotEqual(dirty, clean)                  # the digest does see all three
+
+        # A second edit of the file that is dirty already, and one under the directory git is
+        # told to ignore: neither shows in `status` or in the index, and both move the digest.
+        self.write("src/a.txt", "and editing it again\n")
+        self.assertNotEqual(untouched_digest(self), dirty)
+        self.write("src/a.txt", "the owner is still editing this\n")
+        probe = self.write(os.path.join(".runs", "owner-notes.txt"), "git never sees this\n")
+        self.assertNotEqual(untouched_digest(self), dirty)
+        os.unlink(probe)
+        self.assertEqual(untouched_digest(self), dirty)    # and it is the same digest each time
+
+        with self.assertRaises(engine.Refused):
+            plan_for(self, "make")
+        self.assertEqual(untouched_digest(self), dirty)
+        os.unlink(os.path.join(self.root, "src/scratch.txt"))
+        git(self.root, "checkout", "--", ".")
+        self.check_invariants()
+
+    def test_a_path_that_became_a_directory_refuses_recovery(self):
+        """fail: conflicting paths refuse recovery (FAIL-10, a file and a directory of one name)"""
+        wide = ONE.replace('outputs = ["src/a.txt"]',
+                           'outputs = ["src/a.txt"]\nwrites = ["src/**"]\nmax_attempts = 1')
+        for work, owner in (({"src/here": "a file\n"}, "src/here/owner.txt"),
+                            ({"src/here/deep.txt": "a file in a directory\n"}, "src/here")):
+            with self.subTest(owner=owner):
+                self.setUp()
+                self.workflow(wide)
+                self.script([{"write": dict(work, **{"src/a.txt": "bad\n"}),
+                              "answer": done()}])
+                self.assertEqual(self.start(), 2)
+                mine = sorted(work)[0]
+                self.assertIn(mine, read_record(self, "make")["paths"])
+
+                # The owner commits the other kind of thing under the same name. Neither tree
+                # holds an entry that differs by name, and the work still cannot go back: it
+                # would take the owner's committed file with it.
+                self.write(owner, "the owner's own\n")
+                self.commit()
+                before = untouched_digest(self)
+                with self.assertRaises(engine.Refused) as caught:
+                    plan_for(self, "make")
+                self.assertEqual(str(caught.exception),
+                                 "the set-aside work of 'make' (attempt 1) no longer applies: "
+                                 f"these paths changed since it was set aside: {mine}. Nothing "
+                                 "was changed. Settle them, or retry without --apply-patch to "
+                                 "start clean.")
+                self.assertEqual(untouched_digest(self), before)
+                with open(os.path.join(self.root, owner), encoding="utf-8") as fh:
+                    self.assertEqual(fh.read(), "the owner's own\n")
+                self.check_invariants()
+                self.doCleanups()
+
+    def test_accepted_work_since_refuses_recovery(self):
+        """fail: accepted work since refuses recovery (FAIL-11)"""
+        other = '''
+[[task]]
+id = "other"
+type = "implement"
+prompt = "Independent."
+outputs = ["other/o.txt"]
+gate = ["true"]
+'''
+        made = {"match": "Independent", "write": {"other/o.txt": "o\n"}, "answer": done()}
+
+        # An acceptance after the set-aside: 'make' fails first, 'other' is accepted after it.
+        self.workflow(ONE.replace("gate =", "max_attempts = 1\ngate =") + other)
+        self.script([BAD, made])
+        self.assertEqual(self.start(), 2)
+        accepted = self.git_out("rev-parse", "HEAD")
+        before = untouched_digest(self)
+        with self.assertRaises(engine.Refused) as caught:
+            plan_for(self, "make")
+        self.assertEqual(str(caught.exception),
+                         "the set-aside work of 'make' (attempt 1) cannot be put back: other work "
+                         f"was accepted since (commit {accepted[:7]} of task 'other'). Nothing was "
+                         "changed. Retry without --apply-patch to start clean.")
+        self.assertEqual(untouched_digest(self), before)
+        self.check_invariants()
+
+        # A `--reopen` revert after the set-aside: 'other' is accepted first, so the only commit
+        # the branch gained since the work was set aside is the revert.
+        self.doCleanups()
+        self.setUp()
+        self.workflow(other + ONE.replace("gate =", "max_attempts = 1\ngate ="))
+        self.script([made, BAD])
+        self.assertEqual(self.start(), 2)
+        accepted = self.git_out("rev-parse", "HEAD")
+        self.assertEqual(read_record(self, "make")["head"], accepted)
+        revised = revised_workflow(self, other.replace("other/o.txt", "other/renamed.txt")
+                                   + ONE.replace("gate =", "max_attempts = 1\ngate ="))
+        self.assertEqual(self.runner("replan", "latest", "--workflow", revised, "--reopen", "other",
+                                     "-C", self.root), 0, self.output)
+        revert = self.git_out("rev-parse", "HEAD")
+        self.assertEqual(self.git_out("rev-list", accepted + "..HEAD").splitlines(), [revert])
+        before = untouched_digest(self)
+        with self.assertRaises(engine.Refused) as caught:
+            plan_for(self, "make")
+        self.assertEqual(str(caught.exception),
+                         "the set-aside work of 'make' (attempt 1) cannot be put back: accepted "
+                         f"work was reverted since (commit {revert[:7]} reverts {accepted[:7]}). "
+                         "Nothing was changed. Retry without --apply-patch to start clean.")
+        self.assertEqual(untouched_digest(self), before)
+        self.check_invariants()
+
+    def test_migration_does_not_lose_the_acceptance_boundary_refusal(self):
+        """fail: migration does not lose the acceptance boundary (FAIL-16, the refusal)"""
+        self.workflow(ONE.replace("gate =", "max_attempts = 1\ngate =") + '''
+[[task]]
+id = "other"
+type = "implement"
+prompt = "Independent."
+outputs = ["other/o.txt"]
+gate = ["true"]
+''')
+        self.script([BAD, {"match": "Independent", "write": {"other/o.txt": "o\n"},
+                           "answer": done()}])
+        self.assertEqual(self.start(), 2)
+        accepted = self.git_out("rev-parse", "HEAD")
+        make_legacy(self, "make")                      # a run the previous runner left behind
+        derived = read_record(self, "make")
+        self.assertEqual(derived["head"], self.the_run().info["base_commit"])
+
+        # Had the head been taken from the run's last tip, the range the check examines would be
+        # empty and precisely this acceptance would pass unseen.
+        self.assertEqual(self.the_run().state["last_tip"], accepted)
+        self.assertEqual(self.git_out("rev-list", accepted + "..HEAD"), "")
+        before = untouched_digest(self)
+        with self.assertRaises(engine.Refused) as caught:
+            plan_for(self, "make")
+        self.assertEqual(str(caught.exception),
+                         "the set-aside work of 'make' (attempt 1) cannot be put back: other work "
+                         f"was accepted since (commit {accepted[:7]} of task 'other'). Nothing was "
+                         "changed. Retry without --apply-patch to start clean.")
+        self.assertEqual(untouched_digest(self), before)
+        self.assertFalse(os.path.exists(self.task_file("make", "set-aside.json")))
+        self.check_invariants()
+
+
+    def test_a_moved_branch_refuses_recovery(self):
+        """fail: a branch moved away from the set-aside refuses recovery (C1, and the legacy
+        fallback to today's whole-tree rule)"""
+        self.workflow(ONE.replace('outputs = ["src/a.txt"]', 'outputs = ["src/a.txt"]\n'
+                                  'writes = ["src/**"]\nmax_attempts = 1'))
+        self.script([{"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"},
+                      "answer": done()}])
+        self.assertEqual(self.start(), 2)
+        set_aside_at = read_record(self, "make")["head"]
+        base = read_record(self, "make")["base"]
+        git(self.root, "reset", "-q", "--hard", set_aside_at + "~1")
+
+        before = untouched_digest(self)
+        with self.assertRaises(engine.Refused) as caught:
+            plan_for(self, "make")
+        self.assertEqual(str(caught.exception),
+                         "the set-aside work of 'make' (attempt 1) cannot be put back: the run "
+                         f"branch is no longer a descendant of {set_aside_at[:7]}, where the work "
+                         "was set aside. Nothing was changed.")
+        self.assertEqual(untouched_digest(self), before)
+
+        # The same branch under an old run: no commit of it has the recorded base as its tree, so
+        # there is no head to derive and today's whole-tree rule stands in place of C1 and C3.
+        make_legacy(self, "make")
+        self.assertIsNone(read_record(self, "make")["head"])
+        before = untouched_digest(self)
+        with self.assertRaises(engine.Refused) as caught:
+            plan_for(self, "make")
+        self.assertEqual(str(caught.exception),
+                         f"the patch of 'make' was made against tree {base}, but the accepted tree "
+                         f"is now {self.git_out('rev-parse', 'HEAD^{tree}')}: other work was "
+                         "accepted since. Retry without --apply-patch")
+        self.assertEqual(untouched_digest(self), before)
+
+    def test_a_lost_candidate_tree_refuses_recovery(self):
+        """fail: a candidate tree that is no longer in the repository refuses recovery (C4)"""
+        self.workflow(ONE.replace('outputs = ["src/a.txt"]', 'outputs = ["src/a.txt"]\n'
+                                  'writes = ["src/**"]\nmax_attempts = 1'))
+        self.script([{"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"},
+                      "answer": done()}])
+        self.assertEqual(self.start(), 2)
+        rec = read_record(self, "make")
+        run = self.the_run()
+        for ref in gitops.Git(self.root).pins(run.name):   # by hand: `prune` keeps these refs
+            git(self.root, "update-ref", "-d", ref)
+        git(self.root, "gc", "-q", "--prune=now")
+
+        before = untouched_digest(self)
+        with self.assertRaises(engine.Refused) as caught:
+            plan_for(self, "make")
+        self.assertEqual(str(caught.exception),
+                         f"the candidate tree of 'make' is no longer in this repository "
+                         f"({rec['candidate_ref']}). Its complete patch is still at {rec['patch']} "
+                         "and can be applied by hand with `git apply`. Nothing was changed.")
+        self.assertEqual(untouched_digest(self), before)
+        self.assertTrue(os.path.exists(self.task_file("make", "failed.patch")))
+        self.check_invariants()
+
+    def test_work_outside_the_current_writes_refuses_recovery(self):
+        """fail: a replan that narrows `writes` away from the work refuses recovery (C5)"""
+        wide = ONE.replace('outputs = ["src/a.txt"]',
+                           'outputs = ["src/a.txt"]\nwrites = ["src/**"]\nmax_attempts = 1')
+        self.workflow(wide)
+        self.script([{"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"},
+                      "answer": done()}])
+        self.assertEqual(self.start(), 2)
+        self.assertEqual(read_record(self, "make")["paths"], ["src/a.txt", "src/notes.txt"])
+
+        narrow = revised_workflow(self, wide.replace('writes = ["src/**"]',
+                                                     'writes = ["src/a.txt"]'))
+        self.assertEqual(self.runner("replan", "latest", "--workflow", narrow, "-C", self.root),
+                         0, self.output)
+        self.assertEqual(self.status("make"), "pending")
+        before = untouched_digest(self)
+        with self.assertRaises(engine.Refused) as caught:
+            plan_for(self, "make")
+        self.assertEqual(str(caught.exception),
+                         "the set-aside work of 'make' (attempt 1) cannot be put back: it changed "
+                         "src/notes.txt, which 'make' may no longer write. Nothing was changed. "
+                         "Retry without --apply-patch to start clean.")
+        self.assertEqual(untouched_digest(self), before)
+        self.check_invariants()
+
 
 def tree_digest(path):
     digest = hashlib.sha256()
@@ -949,6 +1236,52 @@ def tree_digest(path):
                 digest.update(os.path.relpath(os.path.join(dirpath, name), path).encode() + b"\0"
                               + fh.read())
     return digest.hexdigest()
+
+
+def plan_for(case, task):
+    """The task's recovery plan, or the refusal that says why the work cannot be put back."""
+    run = case.the_run()
+    git_ = gitops.Git(case.root)
+    return engine.recovery_plan(run, engine.Engine(run, git_), git_, task)
+
+
+def untouched_digest(case):
+    """Everything a refusal must leave alone: the index exactly as it lies on disk, and every path
+    of the work tree — contents, type and mode, the run record, untracked, uncommitted and ignored
+    files included. No git command is run from here, so nothing in the digest can refresh the
+    index's stat cache and hide a write that did happen."""
+    digest = hashlib.sha256()
+
+    def walk(directory):
+        for entry in sorted(os.scandir(directory), key=lambda e: e.name):
+            if entry.path == os.path.join(case.root, ".git"):
+                continue                             # only its index is the runner's business
+            info = entry.stat(follow_symlinks=False)
+            digest.update(f"{os.path.relpath(entry.path, case.root)}\0{info.st_mode:o}\0".encode())
+            if entry.is_symlink():
+                digest.update(os.readlink(entry.path).encode())
+            elif entry.is_dir():
+                walk(entry.path)
+            else:
+                with open(entry.path, "rb") as fh:
+                    digest.update(fh.read())
+
+    walk(case.root)
+    with open(os.path.join(case.root, ".git", "index"), "rb") as fh:
+        digest.update(fh.read())
+    return digest.hexdigest()
+
+
+def revised_workflow(case, tasks):
+    """A revised workflow outside the repository, so the tree stays clean for replan."""
+    header = case.HEADER.format(defaults="", python=sys.executable,
+                                agent=os.path.join(os.path.dirname(__file__),
+                                                   "fake_agent.py")).replace("'", '"')
+    header = header.replace('name = "demo"', 'name = "demo"\nroot = ' + json.dumps(case.root))
+    path = os.path.join(case.side, "replan.toml")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(header + tasks)
+    return path
 
 
 class SetAsideRecord(EngineCase):

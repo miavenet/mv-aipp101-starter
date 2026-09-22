@@ -107,6 +107,12 @@ class Engine(ProviderRouting, Panels):
         return [self.tasks[i] for i in self.order
                 if self.tasks[i]["kind"] == kind and self.tasks[i].get("verifies") == tid]
 
+    def pause_point(self, what):
+        """Before a call starts: stop here if the owner asked for a pause. Nothing is running at
+        a pause point, so the stop needs no reconciliation and loses no work."""
+        if self.run.pause_requested():
+            raise budgets.Paused(f"paused at the owner's request before {what}")
+
     # -- the loop (05, The engine loop) ------------------------------------------------------
 
     def execute(self):
@@ -159,6 +165,14 @@ class Engine(ProviderRouting, Panels):
                     self.st(task["id"]).update(status="waiting_human",
                                                reason="waiting for a person's approval")
                     self.save()
+        except budgets.Paused as stop:
+            state.update(status="stopped", stop_reason=str(stop))
+            self.remember_tree()
+            self.save()
+            self.run.clear_pause()
+            self.run.event("pause-stop", reason=str(stop))
+            self.say(f"runner: {stop}. Continue with runner resume")
+            return EXIT_FAILED
         except budgets.Exhausted as stop:
             state.update(status="stopped", stop_reason=str(stop))
             self.remember_tree()
@@ -287,6 +301,7 @@ class Engine(ProviderRouting, Panels):
     def run_commands(self, commands, tid, adir, timeout_min):
         results, problems = [], []
         for command in commands:
+            self.pause_point(f"the next command of '{tid}'")
             op = self.run.begin("command", task=tid, command=command)
             guard = self.run.integrity_begin()
             startup_problems = []
@@ -509,6 +524,7 @@ class Engine(ProviderRouting, Panels):
 
     def call_agent(self, agent, task, adir, prompt, session_id):
         tid = task["id"]
+        self.pause_point(f"the next call of '{tid}'")
         reservation = budgets.cap_for(agent, task)
         if not budgets.fits(self.run.state, reservation):
             raise budgets.Exhausted(f"budget cannot cover the next call of '{tid}' (${reservation:g})")

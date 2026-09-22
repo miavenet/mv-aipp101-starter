@@ -42,7 +42,7 @@ flowchart TB
 > ```
 >
 > The location is not remembered. **Every** later command on those runs (`status`, `activity`,
-> `runs`, `resume`, `approve`, `reject`, `resolve`, `retry`, `replan`, `prune`, and `doctor`, whose
+> `runs`, `pause`, `resume`, `approve`, `reject`, `resolve`, `retry`, `replan`, `prune`, and `doctor`, whose
 > cache lives there) needs the same `--runs-dir`, or it answers `no runs directory …`. To avoid
 > repeating it, export `TASK_RUNNER_RUNS_DIR=runs` (relative to the top of the repository) or wrap
 > the runner in a project script that always passes the option. The directory writes its own
@@ -75,6 +75,14 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
   agent call and command that has begun, when it started and how long it has been running, with
   an "As of" time. An old "As of" time means no runner is working on the run (it was stopped or
   killed): `runner resume`.
+- **To stop a run on purpose** (the machine is going offline, or you want to change something):
+  `runner pause RUN`. The runner finishes whatever call or command is in flight, stops before the
+  next one, and the command prints `runner resume RUN` when it has. Nothing is lost and there is
+  nothing to reconcile. `--wait MIN` bounds how long the command waits (default 60); a long agent
+  call can take a while to reach that point. If you cannot wait, `runner pause RUN --now` sends the
+  runner SIGTERM (it is addressed through the run lock, so the right process is hit): the call in
+  flight is discarded, its spend is unknown, and `resume` reconciles and runs that attempt again.
+  Either way, budget can only be added on the resume: `runner resume RUN --add-budget USD`.
 - **Do not edit the work tree or the run branch while a run is active or paused.** `resume` will
   refuse to continue if you did.
 

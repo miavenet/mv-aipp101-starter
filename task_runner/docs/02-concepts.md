@@ -350,6 +350,9 @@ raises the run budget, is recorded as an event, and the run continues where it s
   change a run.
 - **A run starts only from a clean work tree (A4).** There is no option to start dirty: a commit
   limited to a task's paths would still take the owner's uncommitted edits in those same files.
+- `pause` stops a running run on purpose. The engine reads the request before it starts any
+  agent call, command or review batch and stops there, so nothing is in flight and nothing is lost;
+  `--now` interrupts instead, addressing the runner through the run lock. Both end in `stopped`.
 - `resume` continues a run. Nothing is kept in memory between steps, so resuming is the normal way
   the runner works. Before doing anything it **reconciles** (A2): it checks that the branch tip, the
   index and the work tree are what the state expects, completes or rolls back any operation whose

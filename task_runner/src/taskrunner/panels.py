@@ -126,6 +126,7 @@ class Panels:
                     break
             if not batch:
                 raise budgets.Exhausted('budget cannot cover the next panel call')
+            self.pause_point(f"the next review batch of '{tid}'")
             try:
                 outcomes, problems = self.reader_batch(batch, candidate)
             except (prompts.EvidenceTooLarge, prompts.FindingsTooLarge) as exc:

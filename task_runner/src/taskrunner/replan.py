@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import shutil
 
-from . import findings, gitops, record, workflow
+from . import engine, findings, gitops, record, workflow
 
 
 class Refused(ValueError):
@@ -141,6 +141,30 @@ def prepare(run, git, source, reopen=()):
     return directory,plan
 
 
+def _keep_way_back(run,git,tid,crash):
+    """Before an affected task's state is reduced: publish the set-aside record an older runner
+    left only in the state, while `base` is still there to derive it from, and read a legacy
+    `apply_patch: true` as the queued `recover` the reduction carries. Replayed after a crash,
+    the record is found on disk and nothing is published twice."""
+    path=os.path.join(run.task_dir(tid),'set-aside.json')
+    if not os.path.exists(path):
+        rec=engine.set_aside_record(run,git,tid)
+        if rec is not None:
+            run.publish_decision(path,rec,crash=crash)
+    st=run.state['tasks'][tid]
+    if st.get('apply_patch') and not st.get('recover'):
+        st['recover']=engine.queued_recovery(run,git,tid)
+    st.pop('apply_patch',None)
+
+
+def queued(run,affected):
+    """What `replan` tells the owner about each affected task that still has a recovery queued."""
+    return [f"{tid}: pending; the set-aside work of attempt {st['recover'].get('attempt')} is still "
+            "queued to be put back"
+            for tid in affected
+            for st in [run.state['tasks'].get(tid) or {}] if st.get('recover')]
+
+
 def apply(run,git,intent,crash=record._no_crash):
     directory=Path(run.path,intent['directory'])
     plan=record.read_json(directory/'plan.json')
@@ -165,6 +189,9 @@ def apply(run,git,intent,crash=record._no_crash):
     crash('replan:definitions-installed')
     new_names=record.task_dir_names(after['tasks'])
     old_states=run.state['tasks']
+    for task in after['tasks']:
+        if task['id'] in plan['affected'] and task['id'] in old_states:
+            _keep_way_back(run,git,task['id'],crash)
     updated={}
     for task in after['tasks']:
         tid=task['id']
@@ -172,7 +199,9 @@ def apply(run,git,intent,crash=record._no_crash):
             'kind':task['kind'],'type':task['type'],'attempts':0,'cost_usd':0.0,'commit':None,'reason':''}))
         if tid in plan['affected']:
             ledger=findings.restart(st['ledger']) if 'ledger' in st else None
+            recover=st.get('recover')
             st={k:st[k] for k in ('dir','attempts','cost_usd')}
+            if recover:st['recover']=recover
             st.update(status='pending',kind=task['kind'],type=task['type'],commit=None,reason='')
             if ledger is not None:st['ledger']=ledger
         updated[tid]=st

@@ -537,6 +537,8 @@ def cmd_replan(args):
             print("affected tasks: " + (", ".join(plan["affected"]) or "none"))
             print("revert commits: " + (", ".join(c[:7] for c in plan["commits"]) or "none"))
             print(replan.execute(run, git, directory, CRASH or record._no_crash))
+            for line in replan.queued(run, plan["affected"]):
+                print(line)
         except (replan.Refused, gitops.GitError, gitops.RevertConflict) as exc:
             return fail(str(exc))
     print(f"Continue with: runner resume {run.name}")

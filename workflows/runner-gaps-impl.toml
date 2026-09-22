@@ -2,6 +2,7 @@
 # G1 and G2 follow the "Implementation plan" of their accepted designs, one task per plan row;
 # G3 is the reduced form: doctor names the cause it detected, and the dependency is documented.
 # The tasks form ONE chain because they edit the same modules (engine.py, panels.py, record.py).
+# G2 order (replanned 2026-09-22): T3, T3b, then T1+T1b as one task, as the design's plan requires.
 # G2's scenario ids collide with G1's in places (both designs say RUN-18..21); G2's task T6 renumbers.
 # Run from this worktree with the main checkout's runner:
 #   /workspace/task_runner/runner --runs-dir runs <command> workflows/runner-gaps-impl.toml
@@ -166,23 +167,11 @@ gate = ["python3 -m unittest discover -s task_runner/tests -q"]
 reviewers = [{ perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", complexity = "high", fallback_agents = ["claude"] }]
 
 [[task]]
-id = "g2-t1"
-type = "implement"
-complexity = "high"
-title = "G2 task T1: The repair in the ledger"
-needs = ["g1-11"]
-prompt = "Implement task T1 of the \"Implementation plan\" section of the accepted design task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md (G2), and nothing beyond it. Read the whole design first: the mechanism, state changes, exact messages and crash points it specifies are the contract, and the reviewer checks your change against it. Scenarios this task must make true, each with a test in the model-free suite named after its scenario row: FND-21, 22, 23, 24, 26. Where a scenario is split across tasks, cover the half named here and leave the rest. Earlier tasks of the plan are already on the branch; build on them rather than re-doing them. Follow the surrounding code's style; no new dependencies; every existing test must still pass (a test the design says to rewrite is the only exception). If the design is wrong or cannot be implemented as written, say so in your answer as a blocker instead of silently departing from it. In your summary, list the scenarios covered with their test names."
-outputs = ["task_runner/src/taskrunner/findings.py", "task_runner/src/taskrunner/panels.py", "task_runner/tests/test_findings.py"]
-writes = ["task_runner/src/taskrunner/findings.py", "task_runner/src/taskrunner/panels.py", "task_runner/tests/test_findings.py"]
-gate = ["python3 -m unittest discover -s task_runner/tests -q"]
-reviewers = [{ perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", complexity = "high", fallback_agents = ["claude"] }]
-
-[[task]]
 id = "g2-t3"
 type = "implement"
 complexity = "standard"
 title = "G2 task T3: note_rejected_answer"
-needs = ["g2-t1"]
+needs = ["g1-11"]
 prompt = "Implement task T3 of the \"Implementation plan\" section of the accepted design task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md (G2), and nothing beyond it. Read the whole design first: the mechanism, state changes, exact messages and crash points it specifies are the contract, and the reviewer checks your change against it. Scenarios this task must make true, each with a test in the model-free suite named after its scenario row: RUN-21, RUN-22, RUN-23, RUN-25. Where a scenario is split across tasks, cover the half named here and leave the rest. Earlier tasks of the plan are already on the branch; build on them rather than re-doing them. Follow the surrounding code's style; no new dependencies; every existing test must still pass (a test the design says to rewrite is the only exception). If the design is wrong or cannot be implemented as written, say so in your answer as a blocker instead of silently departing from it. Scenario ids in this design were assigned before the G1 work landed and may collide with rows G1 added; identify tests by the scenario's test name from the design's table, not by its id. In your summary, list the scenarios covered with their test names."
 outputs = ["task_runner/src/taskrunner/panels.py", "task_runner/tests/test_panels.py"]
 writes = ["task_runner/src/taskrunner/panels.py", "task_runner/tests/test_panels.py"]
@@ -202,14 +191,14 @@ gate = ["python3 -m unittest discover -s task_runner/tests -q"]
 reviewers = [{ perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", complexity = "high", fallback_agents = ["claude"] }]
 
 [[task]]
-id = "g2-t1b"
+id = "g2-t1"
 type = "implement"
 complexity = "high"
-title = "G2 task T1b: The coordinator's apply pass handles ProtocolError"
+title = "G2 tasks T1 and T1b: the repair in the ledger, and the coordinator handles ProtocolError"
 needs = ["g2-t3b"]
-prompt = "Implement task T1b of the \"Implementation plan\" section of the accepted design task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md (G2), and nothing beyond it. Read the whole design first: the mechanism, state changes, exact messages and crash points it specifies are the contract, and the reviewer checks your change against it. Scenarios this task must make true, each with a test in the model-free suite named after its scenario row: FND-27, FND-29. Where a scenario is split across tasks, cover the half named here and leave the rest. Earlier tasks of the plan are already on the branch; build on them rather than re-doing them. Follow the surrounding code's style; no new dependencies; every existing test must still pass (a test the design says to rewrite is the only exception). If the design is wrong or cannot be implemented as written, say so in your answer as a blocker instead of silently departing from it. In your summary, list the scenarios covered with their test names."
-outputs = ["task_runner/src/taskrunner/panels.py", "task_runner/tests/test_panels.py"]
-writes = ["task_runner/src/taskrunner/panels.py", "task_runner/tests/test_panels.py"]
+prompt = "Implement tasks T1 AND T1b of the \"Implementation plan\" section of the accepted design task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md (G2), and nothing beyond them; the plan itself says T1b must land with T1 because T1 alone leaves a reachable uncaught exception (the coordinator's apply pass), and T3/T3b, which T1b builds on, are already on the branch. Read the whole design first: the mechanism, state changes, exact messages and crash points it specifies are the contract, and the reviewer checks your change against it. Scenarios this task must make true, each with a test in the model-free suite named after its scenario row: FND-21, 22, 23, 24, 26 (T1) and FND-27, FND-29 (T1b). Where a scenario is split across tasks, cover the half named here and leave the rest. Earlier tasks of the plan are already on the branch; build on them rather than re-doing them. Follow the surrounding code's style; no new dependencies; every existing test must still pass (a test the design says to rewrite is the only exception). If the design is wrong or cannot be implemented as written, say so in your answer as a blocker instead of silently departing from it. In your summary, list the scenarios covered with their test names."
+outputs = ["task_runner/src/taskrunner/findings.py", "task_runner/src/taskrunner/panels.py", "task_runner/tests/test_findings.py", "task_runner/tests/test_panels.py"]
+writes = ["task_runner/src/taskrunner/findings.py", "task_runner/src/taskrunner/panels.py", "task_runner/tests/test_findings.py", "task_runner/tests/test_panels.py"]
 gate = ["python3 -m unittest discover -s task_runner/tests -q"]
 reviewers = [{ perspective = "principal-engineer", agent = "astra-review", model = "gpt-6-astra", complexity = "high", fallback_agents = ["claude"] }]
 
@@ -218,7 +207,7 @@ id = "g2-t2"
 type = "implement"
 complexity = "standard"
 title = "G2 task T2: Record the repair"
-needs = ["g2-t1b"]
+needs = ["g2-t1"]
 prompt = "Implement task T2 of the \"Implementation plan\" section of the accepted design task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md (G2), and nothing beyond it. Read the whole design first: the mechanism, state changes, exact messages and crash points it specifies are the contract, and the reviewer checks your change against it. Scenarios this task must make true, each with a test in the model-free suite named after its scenario row: FND-25 (ledger, event, verdict.json). Where a scenario is split across tasks, cover the half named here and leave the rest. Earlier tasks of the plan are already on the branch; build on them rather than re-doing them. Follow the surrounding code's style; no new dependencies; every existing test must still pass (a test the design says to rewrite is the only exception). If the design is wrong or cannot be implemented as written, say so in your answer as a blocker instead of silently departing from it. In your summary, list the scenarios covered with their test names."
 outputs = ["task_runner/src/taskrunner/findings.py", "task_runner/src/taskrunner/panels.py", "task_runner/tests/test_findings.py", "task_runner/tests/test_panels.py"]
 writes = ["task_runner/src/taskrunner/findings.py", "task_runner/src/taskrunner/panels.py", "task_runner/tests/test_findings.py", "task_runner/tests/test_panels.py"]

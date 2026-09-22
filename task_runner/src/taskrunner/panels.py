@@ -4,6 +4,7 @@ A panel is persisted before dispatch. Complete results survive budget pauses, an
 applied together in workflow order only after every reader has finished on an unchanged tree.
 """
 import concurrent.futures
+import datetime
 import hashlib
 import json
 import os
@@ -11,7 +12,41 @@ import re
 import threading
 import tomllib
 
-from . import agents, budgets, checks, findings, prompts, record
+from . import agents, budgets, checks, findings, proc, prompts, record
+
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _clean(text, limit):
+    """Agent text bound for `state.json`: control characters become spaces, then it is redacted
+    (RUN-10's rule, on this new surface), then cut to `limit` characters with a trailing ellipsis."""
+    text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
+    text = proc.redact(text.encode('utf-8', 'surrogateescape')).decode('utf-8', 'surrogateescape')
+    return text if len(text) <= limit else text[:limit] + '…'
+
+
+def _review_summary(structured):
+    """The verdict, the readable findings and the count of the rest, read from a rejected review
+    answer field by field and never as a whole: `structured` may be `None`, or an object that
+    fails `validate.REVIEW` on any sibling field, or hold `findings` entries that are themselves
+    malformed. Nothing here is guessed at."""
+    verdict, review_findings, unreadable = None, [], 0
+    if isinstance(structured, dict):
+        if structured.get('verdict') in ('pass', 'block'):
+            verdict = structured['verdict']
+        raw_findings = structured.get('findings')
+        if isinstance(raw_findings, list):
+            for item in raw_findings:
+                if isinstance(item, dict) and isinstance(item.get('title'), str):
+                    severity = item.get('severity')
+                    if severity not in ('blocking', 'advisory'):
+                        severity = 'unknown'
+                    review_findings.append({'severity': severity, 'title': _clean(item['title'], 120)})
+                else:
+                    unreadable += 1
+    return verdict, review_findings, unreadable
 
 
 class Panels:
@@ -197,6 +232,28 @@ class Panels:
                 job['result'] = {'status': outcome.status, 'error': outcome.error}
         self.run.event('review-call', task=job['task'], status=outcome.status,
                        round=job['round'], error=outcome.error)
+
+    def note_rejected_answer(self, job, producer_id, *, status, error, structured):
+        """Summarise one rejected review answer into the producer's state, and correct the
+        invocation's outcome.json. Called only from reject_answer, so collection and final
+        application record a rejection identically. Observational: nothing in the engine reads it
+        back to decide."""
+        rejected = self.st(producer_id).setdefault('rejected_reviews', [])
+        invocation = job.get('invocation')
+        key = invocation or (job['task'], job['round'], job['tries'])
+        already = any((e.get('invocation') or (e['reviewer'], e['round'], e['try'])) == key
+                      for e in rejected)
+        if not already:
+            verdict, review_findings, unreadable = _review_summary(structured)
+            rejected.append({'reviewer': job['task'], 'round': job['round'], 'try': job['tries'],
+                             'invocation': invocation, 'at': _now(), 'verdict': verdict,
+                             'findings': review_findings, 'unreadable_findings': unreadable,
+                             'error': _clean(error, 400)})
+        if invocation:
+            path = os.path.join(self.run.path, invocation, 'outcome.json')
+            outcome = record.read_json(path)
+            outcome['status'], outcome['error'] = status, error
+            record.write_durable(path, record.dump_json(outcome))
 
     def close_panel(self,panel,void=False):
         for job in panel['jobs']:

@@ -3,6 +3,7 @@ import json
 import os
 from helpers import EngineCase, done
 from test_findings import finding, review, resolution
+from taskrunner import engine, gitops
 
 ONE='''
 [[task]]
@@ -286,6 +287,88 @@ gate=["test ! -f src/a"]
         self.assertEqual(self.resume(),0,self.output)
         self.assertEqual((self.count(a),self.count(b)),(1,1))
         self.assertEqual(self.the_run().state['spend'],spend);self.check_invariants()
+
+    def coordinator(self):
+        return engine.Engine(self.the_run(), gitops.Git(self.root))
+
+    def test_invocation_records_the_outcome_that_was_used(self):
+        """run: the invocation records the outcome that was used (RUN-21)"""
+        a, b = self.setup_panel()
+        self.script({'make': [GOOD], a: [PASS], b: [PASS]})
+        self.assertEqual(self.start(), 0, self.output)
+        before = self.read_json(a, 'round-1', 'invocation-1', 'outcome.json')
+        self.assertEqual(before['status'], 'ok')
+        eng = self.coordinator()
+        inv = os.path.relpath(self.task_file(a, 'round-1', 'invocation-1'), eng.run.path)
+        diagnostic = ("resolutions must cover exactly this reviewer's open blocking findings, "
+                     "each once: required none, so resolutions must be []; supplied 'x'")
+        job = {'task': a, 'round': 1, 'tries': 1, 'invocation': inv}
+        eng.note_rejected_answer(job, 'make', status='protocol-error', error=diagnostic,
+                                 structured=review(resolutions=[resolution('x')]))
+        after = self.read_json(a, 'round-1', 'invocation-1', 'outcome.json')
+        self.assertEqual(after['status'], 'protocol-error')
+        self.assertEqual(after['error'], diagnostic)
+        self.assertEqual(after['seconds'], before['seconds'])
+        self.check_invariants()
+
+    def test_malformed_sibling_field_does_not_hide_a_readable_finding(self):
+        """run: a malformed sibling field does not hide a readable finding (RUN-22)"""
+        a, b = self.setup_panel()
+        self.script({'make': [GOOD], a: [PASS], b: [PASS]})
+        self.assertEqual(self.start(), 0, self.output)
+        eng = self.coordinator()
+        structured = {'verdict': 'block', 'summary': 'ok', 'resolutions': None,
+                     'findings': [finding(), dict(finding(), title='second issue', severity='advisory')]}
+        job = {'task': a, 'round': 1, 'tries': 1, 'invocation': None}
+        eng.note_rejected_answer(job, 'make', status='protocol-error',
+                                 error="answer.resolutions must be a JSON array, not null",
+                                 structured=structured)
+        entry = eng.st('make')['rejected_reviews'][0]
+        self.assertEqual(entry['verdict'], 'block')
+        self.assertEqual([f['title'] for f in entry['findings']], ['Fix this', 'second issue'])
+        self.assertEqual(entry['unreadable_findings'], 0)
+        self.check_invariants()
+
+    def test_no_rejected_answer_or_title_is_omitted(self):
+        """run: no rejected answer or title is omitted (RUN-23)"""
+        a, b = self.setup_panel()
+        self.script({'make': [GOOD], a: [PASS], b: [PASS]})
+        self.assertEqual(self.start(), 0, self.output)
+        eng = self.coordinator()
+        many_findings = [dict(finding(), title=f'issue {n}') for n in range(11)]
+        job = {'task': a, 'round': 1, 'tries': 1, 'invocation': None}
+        eng.note_rejected_answer(job, 'make', status='protocol-error', error='e',
+                                 structured={'verdict': 'block', 'summary': 's', 'resolutions': [],
+                                             'findings': many_findings})
+        entry = eng.st('make')['rejected_reviews'][0]
+        self.assertEqual(len(entry['findings']), 11)
+        self.assertEqual([f['title'] for f in entry['findings']], [f'issue {n}' for n in range(11)])
+        for n in range(1, 21):
+            job = {'task': f'reviewer-{n % 7}', 'round': n, 'tries': 1, 'invocation': None}
+            eng.note_rejected_answer(job, 'make', status='protocol-error', error=f'e{n}',
+                                     structured={'verdict': 'pass', 'summary': 's',
+                                                 'resolutions': [], 'findings': []})
+        self.assertEqual(len(eng.st('make')['rejected_reviews']), 21)
+        self.check_invariants()
+
+    def test_unreadable_finding_entries_are_counted_not_guessed(self):
+        """run: unreadable finding entries are counted, not guessed (RUN-25)"""
+        a, b = self.setup_panel()
+        self.script({'make': [GOOD], a: [PASS], b: [PASS]})
+        self.assertEqual(self.start(), 0, self.output)
+        eng = self.coordinator()
+        mixed = [finding(), 'a bare string', {'detail': 'no title here'},
+                dict(finding(), title='severity is unreadable', severity=7)]
+        job = {'task': a, 'round': 1, 'tries': 1, 'invocation': None}
+        eng.note_rejected_answer(job, 'make', status='protocol-error', error='e',
+                                 structured={'verdict': 'block', 'summary': 's', 'resolutions': [],
+                                             'findings': mixed})
+        entry = eng.st('make')['rejected_reviews'][0]
+        self.assertEqual([f['title'] for f in entry['findings']],
+                         ['Fix this', 'severity is unreadable'])
+        self.assertEqual([f['severity'] for f in entry['findings']], ['blocking', 'unknown'])
+        self.assertEqual(entry['unreadable_findings'], 2)
+        self.check_invariants()
 
     def test_reader_detects_ledger_tampering(self):
         from taskrunner import agents,validate

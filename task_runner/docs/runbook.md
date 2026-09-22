@@ -18,7 +18,7 @@ flowchart TB
     H --> H1{"what is it waiting for?"}
     H1 -- "human task" --> AP["approve / reject -m NOTE<br/>then resume"]
     H1 -- "escalated finding" --> RS["resolve FINDING --as resolved|advisory|upheld<br/>then resume"]
-    H1 -- "task blocked" --> BL["read the reason, fix the brief or the gate (replan),<br/>then retry TASK [--apply-patch], resume"]
+    H1 -- "task blocked" --> BL["read the reason, fix the brief or the gate, replan<br/>(either order), then retry TASK [--apply-patch], resume"]
     F --> F1{"run status?"}
     F1 -- "stopped (budget)" --> BUD["resume --add-budget USD"]
     F1 -- "failed task" --> RT["read tasks/NNN-task/STATUS.md and failed.patch,<br/>retry TASK [--apply-patch], resume"]
@@ -84,15 +84,15 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
 |---|---|
 | waiting for approval of TASK | Review the candidate in the work tree. `runner approve RUN TASK` or `runner reject RUN TASK -m "why"`. Then `resume` |
 | finding X is escalated | Read both sides in `findings.json`. `runner resolve RUN X --as resolved\|advisory\|upheld -m "why"`. Then `resume` |
-| TASK is blocked: the agent said … | The brief, the inputs or a gate is wrong. Fix the workflow, `runner replan RUN`, `runner retry RUN TASK`, `resume` |
-| TASK is blocked: attempts ran out with findings open | Read the findings. Either settle them yourself and `retry --apply-patch`, or change the brief and `retry` clean |
+| TASK is blocked: the agent said … | The brief, the inputs or a gate is wrong. Fix the workflow, then, in either order, `runner replan RUN` and `runner retry RUN TASK --apply-patch` to keep the set-aside work (`runner retry RUN TASK` starts clean instead; nothing at all is needed once a replan has already reset the task to pending). Then `runner resume RUN` |
+| TASK is blocked: attempts ran out with findings open | Read the findings. Either settle them yourself, then `runner retry RUN TASK --apply-patch`, or change the brief and `runner retry RUN TASK` to start clean. Then `runner resume RUN` |
 | stopped: out of budget | `runner resume RUN --add-budget 20` |
 
 ## 4. Failures — to verify at stages 2 and 3
 
 | Situation | Do |
 |---|---|
-| A task failed | Its work is in `tasks/NNN-task/failed.patch`, and the tree is back at the last accepted state. Read the last attempt's `gate.log`. `retry` clean, or `retry --apply-patch` to continue from the failed work |
+| A task failed | Its work is in `tasks/NNN-task/failed.patch`, and the tree is back at the last accepted state. Read the last attempt's `gate.log`. `runner retry RUN TASK` to start clean, or `runner retry RUN TASK --apply-patch` to continue from the failed work — a commit of workflow or brief edits made since the set-aside does not prevent this, but an acceptance since does. Then `runner resume RUN` |
 | Environment failure | No producer attempt was used; any reported cost remains in the record. Fix the cause, `runner doctor WORKFLOW --force`, `resume` |
 | The runner was killed | `runner resume`. It reconciles first. If an agent from the dead runner is still alive, it refuses; `resume --stop-orphans` stops it |
 | Reconciliation error | The message states what was expected and what was found. Restore that, then `resume`. The runner will not guess |
@@ -130,6 +130,7 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
 | What did the agent print? | `…/attempt-N/invocation-N/stdout.log`, `stderr.log` |
 | Why did the attempt not pass? | `…/attempt-N/gate.log`, `reverted.json`, the next attempt's `feedback.md` |
 | What did review find, and was it fixed? | `tasks/NNN-task/findings.json` |
+| What work is waiting to be put back, and how | `tasks/NNN-task/set-aside.json` |
 | What was verified against which candidate? | `…/attempt-N/verification.json` |
 | What did it cost? | `run.json`: known, reserved and unpriced spend |
 | Everything, in order | `<run>/events.jsonl` |

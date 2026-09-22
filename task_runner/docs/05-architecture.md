@@ -92,6 +92,9 @@ without using a producer attempt, and is a writer for the rest of the run (B7).
 
 ```
 become the active producer; snapshot BASE; pin it under refs/task-runner/<run>/
+if `retry --apply-patch` queued a recovery: put the set-aside work back from its pinned candidate
+tree (a `recover` intent of its own; the transaction opens with it already in the tree, and the
+next attempt's author is told where it came from)
 attempt n (own directory, numbered once, never reused):
   run the agent (continue the session on rework if qualified for `resume`; otherwise, and after an
                  error, timeout or interruption, a new session with the full prompt plus feedback)
@@ -346,6 +349,8 @@ idempotent, so reconciliation is "do it again":
 | Pin a ref | ref name, tree id | Run `update-ref` again. Same result |
 | Restore paths (set-aside, out-of-`writes` revert, restoring a candidate after a verifier) | the target tree id and the path list | Run the restore again, then verify by snapshot against the target tree. Restoring is idempotent because it always writes from the pinned target |
 | Write `failed.patch` | candidate and base tree ids | Regenerate from the two pinned trees |
+| Put set-aside work back (`recover`) | the task, attempt, the commit HEAD was on, the target (candidate) tree, the base tree, the expected result tree and the paths | Refuse unless `git.head()` still equals the recorded commit (the branch moved); otherwise restore the paths from the pinned candidate tree again, verify by snapshot against the expected tree, and open the producer's transaction from the intent, whatever the state on disk already showed |
+| Write or replace `set-aside.json` (`decision`) | the whole payload, including `at` and `reason` | Write the file and its integrity-manifest entry again from the payload, before any integrity check runs |
 | Index sync after a commit | the commit id | `git read-tree HEAD` again |
 | A revert during `--reopen` | the ordered list of commits, and how many are done | If `REVERT_HEAD` exists, `git revert --abort`. Then continue from the first commit whose revert is not on the branch, recognised by its `Operation:` trailer |
 | Take the repository lock | run id, process identity | See process identity below |
@@ -414,8 +419,10 @@ runner status [RUN] [--rebuild]       print STATUS.md; --rebuild regenerates all
 runner runs WORKFLOW                  list runs with status, cost and date
 runner approve RUN TASK [-m NOTE]     a person approves a human task
 runner reject RUN TASK -m NOTE        a person rejects; the note becomes feedback
-runner retry RUN TASK [--apply-patch] fresh attempts for a failed or blocked task. Refused while another
-                                      task's transaction is open, naming the task the run waits on (B7)
+runner retry RUN TASK [--apply-patch] fresh attempts for a failed or blocked task, or for a pending task
+                                      that a replan left with an unconsumed set-aside record. Refused
+                                      while another task's transaction is open, naming the task the run
+                                      waits on (B7)
 runner resolve RUN FINDING --as resolved|advisory|upheld [-m NOTE]
                                       a person settles an escalated finding; then `resume` (B10)
 runner replan RUN [--workflow FILE] [--reopen TASK]     bring an edited workflow into the run, where safe

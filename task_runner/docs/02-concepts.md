@@ -333,9 +333,15 @@ When a task fails or is blocked:
 4. Independent branches continue.
 
 The run ends with exit 2 (failed) or 255 (a person is needed). `retry TASK` gives fresh attempts,
-either clean or with `--apply-patch`, which first checks that the patch's base is still the current
-accepted tree and refuses, with an explanation, if it is not. While a producer transaction is open,
-`retry` is refused for any other task and says which task the run is waiting on (B7).
+either clean or with `--apply-patch`. `--apply-patch` checks the current tree only at the paths the
+set-aside work touched, not the whole tree, so a commit that touches only the workflow or the brief
+does not block it; it also refuses unless the branch is still a descendant of where the work was set
+aside, no runner-made commit (an acceptance, or a `--reopen` revert) landed since, the pinned
+candidate tree still exists, and every touched path is still inside the task's current `writes`. If
+every check passes, the work is restored from the **pinned candidate tree**, by type and mode, before
+the next attempt runs; `failed.patch` stays the portable copy for applying by hand and is never read
+on this path. A refusal changes nothing and says why. While a producer transaction is open, `retry`
+is refused for any other task and says which task the run is waiting on (B7).
 
 **Running out of budget is a pause, not a failure (B10).** No new call starts, calls in flight
 finish, and the run stops as `stopped` with exit 2. If a producer is active, its transaction stays

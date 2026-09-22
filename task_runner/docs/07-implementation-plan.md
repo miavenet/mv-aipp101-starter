@@ -1,7 +1,7 @@
 # 07 — Implementation plan
 
 Status: **the owner gave the go-ahead on 2026-09-19, after the adversarial review was answered
-(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is done: 116 tests pass in all, covering GIT-01 to GIT-16, REC-01 to REC-13 and RUN-01, 02, 07, 08, 11, 16, 17, several at primitive level until the engine exists. `start` creates a run and stops in stage 2. Stage 3 is now done: 196 tests pass; `command` agents, producer transactions, gates/checks, human decisions, resume and retry work end to end. Stage 4 is now done: 227 runner tests pass; headless adapters, observed capability qualification, caching and gate preflight are implemented. Stage 5 is now done: findings, panels, bounded parallel readers, resolution and budget pauses are implemented. Stage 6 is now done: frozen replans and resumable reopening are implemented. The live check has exercised review/rework, implementation and record comprehension; its final human sign-off is pending.** Progress is recorded in the
+(amendments B1 to B12). Stage 1 is done: 51 tests pass, covering WF-01 to WF-24, and `validate` and `graph` work on the example. Stage 2 is done: 116 tests pass in all, covering GIT-01 to GIT-16, REC-01 to REC-13 and RUN-01, 02, 07, 08, 11, 16, 17, several at primitive level until the engine exists. `start` creates a run and stops in stage 2. Stage 3 is now done: 196 tests pass; `command` agents, producer transactions, gates/checks, human decisions, resume and retry work end to end. Stage 4 is now done: 227 runner tests pass; headless adapters, observed capability qualification, caching and gate preflight are implemented. Stage 5 is now done: findings, panels, bounded parallel readers, resolution and budget pauses are implemented. Stage 6 is now done: frozen replans and resumable reopening are implemented. The live check has exercised review/rework, implementation and record comprehension; its final human sign-off is pending. Stage 10 (resilience) is now done for G1: set-aside work survives a replan and is put back on request, in either order of `replan` and `retry`; 389 tests pass.** Progress is recorded in the
 [task_runner README](../README.md).
 
 ## Approach
@@ -54,6 +54,7 @@ environment before spending effort on panels.
 | **7. Live check** | nothing new | see below | Real read, write, verification and rework are in the record, **on a host and profile that `doctor` has qualified** |
 | **8. First real workflow** | `workflows/nyse-m1.toml` | | Usefulness |
 | **9. Tutorial and runbook** | [`docs/tutorial/`](tutorial/README.md) and [`docs/runbook.md`](runbook.md), finished against the real program. The design chapters are drafted early, from these documents; the runbook is completed last | see below | Every command in the runbook was run, and its output pasted from a real run. Every diagram matches the code. A reader who has seen nothing else can write a workflow, run it, and recover from each stop |
+| **10. Resilience** | Fixes for gaps found while the runner drove real workflows. G1 (`docs/design/runner-gaps/G1-recover-set-aside-work.md`): set-aside work can be put back after a `replan`, in either order of `replan` and `retry`, with a path-scoped base check, a decision record that survives the reset, a notice to the next attempt's author, and crash recovery at each new step | FAIL-08 to FAIL-16, RUN-18 to RUN-21, REC-14 to REC-16 | The runbook's own recovery rows are read and run against a scratch repository, so the table cannot drift from what the commands do |
 
 Parallel readers come late on purpose: the transaction, the recovery rules and the findings rules
 are where the accuracy lives, and they are easier to get right with one job at a time. The engine
@@ -109,6 +110,36 @@ The [stage 6 walkthrough](stage-6-walkthrough.md) records refusal without `--reo
 reopening, renewed human verification, and a clean result. A replan requires a clean tree and no
 active producer transaction. Commit edits to workflow definitions first, or pass an external revised
 file with `--workflow`; replan accepts definition-only commits made since the pause.
+
+### Stage 10 completion — G1, recovering set-aside work (2026-09-22)
+
+`docs/design/runner-gaps/G1-recover-set-aside-work.md` is implemented, in the eleven tasks its own
+implementation plan lays out:
+
+1. `run.publish_decision`, the `decision` intent and `_reconcile_decision`.
+2. The set-aside record, `set-aside.json`, written by `engine.set_aside`; `engine.set_aside_record`
+   derives one in memory for a run an older runner paused, including the `head` search over the
+   run's starting commit.
+3. `gitops.tree_with`, factored out of `build_commit_tree`.
+4. `engine.recovery_plan`: conditions C1 to C5 and their exact refusals, reads only.
+5. `retry` accepts a recoverable `pending` producer and can cancel a queued recovery; the `recover`
+   state key replaces `apply_patch`, with a read path for old runs.
+6. `retry` adopts a validated branch tip, so the owner's brief commit does not stop the next `resume`.
+7. The `recover` intent, `open_transaction`, and `_reconcile_recover`.
+8. `replan.apply` migrates a legacy record before its destructive reduction, and carries a queued
+   `recover` across it.
+9. The author's notice: `feedback["recovered"]`, rendered by `prompts.feedback_text` and appended to
+   a template that omits `{findings}`.
+10. `STATUS.md` for both a task with set-aside work and the run's "Next" section, honest about what a
+    record can prove (a bare `failed.patch` with no derivable record advertises nothing).
+11. These documents, and `test_runbook.py`, which reads the runbook's own blocked-task and
+    failed-task rows and runs them.
+
+The recovery is a path-scoped restore from the pinned candidate tree (`gitops.restore`), never
+`git apply`, so it inherits idempotent crash recovery and snapshot verification. The suite covers
+FAIL-08 to FAIL-16, RUN-18 to RUN-21 and REC-14 to REC-16, and passes at 389 tests with no model
+calls (`python3 -m unittest discover -s task_runner/tests -q`, `TASK_RUNNER_*` unset — the runner
+exports those only to agent calls, never to test runs or gates).
 
 ### The scripted agent's contract (stage 3 onward)
 

@@ -65,6 +65,8 @@ first eight characters of its UUID, the same pair as its branch `run/<workflow>-
             responses.json            the author's answer to each finding
           failed.patch                only if the task was set aside (D9): a complete binary-capable patch.
                                       Its candidate tree is also pinned under refs/task-runner/<run>/
+          set-aside.json              beside failed.patch: the record `retry --apply-patch` reads back —
+                                      attempt, base, candidate, paths — and that survives a replan
           commit.json                 only when accepted: sha, files, message
         011-design.review.principal-engineer/
           task.json  STATUS.md  index.json

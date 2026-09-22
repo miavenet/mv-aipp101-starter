@@ -583,6 +583,157 @@ gate=["test ! -f src/a"]
         """run: a refused recovery stays refused through the rejection (RUN-27, outcome absent)"""
         self.refused_recovery('absent')
 
+    def events(self):
+        with open(os.path.join(self.the_run().path, 'events.jsonl'), encoding='utf-8') as fh:
+            return [json.loads(line) for line in fh]
+
+    def test_meaningless_resolution_is_dropped_and_the_finding_is_kept(self):
+        """fnd: a meaningless resolution is dropped, the finding is kept (FND-21)"""
+        a, b = self.setup_panel()
+        by_title = review([finding()], resolutions=[dict(finding='Fix this', status='unresolved', note='n')])
+        fixed = dict(finding='make/PE-1', action='fixed', note='Fixed')
+        self.script({'make': [GOOD, {'write': {'src/a': 'better\n'}, 'answer': done(responses=[fixed])}],
+                     a: [{'answer': by_title}, {'answer': review(resolutions=[resolution()])}],
+                     b: [PASS, PASS]})
+        self.assertEqual(self.start(), 0, self.output)
+        self.assertEqual(self.count(a), 2)
+        self.assertFalse(os.path.exists(self.task_file(a, 'round-1', 'invocation-2')))
+        with open(self.task_file('make', 'attempt-2', 'feedback.md')) as fh:
+            self.assertIn('make/PE-1', fh.read())
+        ledger = self.ledger()
+        self.assertEqual([(f['id'], f['status']) for f in ledger['findings']], [('make/PE-1', 'resolved')])
+        self.assertEqual(self.read_json(a, 'round-1', 'verdict.json')['result']['verdict'], 'block')
+        self.assertNotIn('rejected_reviews', self.the_run().state['tasks']['make'])
+        self.check_invariants()
+
+    def test_a_repair_never_produces_a_pass_and_the_rejections_are_summarised(self):
+        """fnd: a repair never produces a pass (FND-24, the owner's summary)"""
+        a, b = self.setup_panel()
+        junk = review(resolutions=[dict(finding='looks fine to me', status='resolved', note='n')],
+                      verdict='pass')
+        self.script({'make': [GOOD], a: [{'answer': junk}]*3, b: [PASS]})
+        self.assertEqual(self.start(), 255, self.output)
+        self.assertEqual(self.count(a), 3)
+        state = self.the_run().state['tasks']['make']
+        self.assertEqual(state['status'], 'blocked')
+        self.assertIn('required none, so resolutions must be []', state['reason'])
+        entries = state['rejected_reviews']
+        self.assertEqual([(e['try'], e['verdict'], e['findings']) for e in entries],
+                         [(1, 'pass', []), (2, 'pass', []), (3, 'pass', [])])
+        self.assertEqual(state.get('ledger', {}).get('findings', []), [])
+        self.check_invariants()
+
+    def test_valid_answers_are_untouched_by_the_repair(self):
+        """fnd: valid answers are untouched (FND-26)"""
+        a, b = self.setup_panel()
+        responses = [dict(finding='make/'+code+'-1', action='fixed', note='Fixed') for code in ('PE', 'SC')]
+        self.script({'make': [GOOD, {'write': {'src/a': 'better\n'}, 'answer': done(responses=responses)}],
+                     a: [{'answer': review([finding()])}, {'answer': review(resolutions=[resolution()])}],
+                     b: [{'answer': review([finding()])}, {'answer': review(resolutions=[resolution('make/SC-1')])}]})
+        self.assertEqual(self.start(), 0, self.output)
+        self.assertEqual((self.count('make'), self.count(a), self.count(b)), (2, 2, 2))
+        state = self.the_run().state['tasks']['make']
+        self.assertEqual(state['attempts_used'], 2)
+        self.assertNotIn('rejected_reviews', state)
+        for f in self.ledger()['findings']:
+            self.assertEqual([h['event'] for h in f['history']], ['raised', 'response', 'resolution'])
+        self.assertEqual([e for e in self.events() if e['event'] in ('review-repair', 'review-answer-rejected')], [])
+        for rid in (a, b):
+            for n in (1, 2):
+                self.assertNotIn('repair', self.read_json(rid, f'round-{n}', 'verdict.json')['result'])
+        self.check_invariants()
+
+    COLLIDING = review([finding()], resolutions=[dict(finding='make/PE-1', status='unresolved', note='n')])
+    COLLISION = "required none, so resolutions must be \\[\\]; supplied 'make/PE-1'"
+
+    def collision(self, a, b, run_no=0):
+        """PE raises make/PE-1; SC, beside it, blocks and names that id as a resolution. At collection
+        the id does not exist yet, so SC is repaired; at final application it does, so SC is refused."""
+        if run_no:
+            self.git_out('checkout', 'main')
+            for tid in ('make', a, b):
+                counter = self.script_path+'.'+tid+'.counter'
+                if os.path.exists(counter): os.unlink(counter)
+        responses = [dict(finding='make/'+code+'-1', action='fixed', note='Fixed') for code in ('PE', 'SC')]
+        self.script({'make': [GOOD, {'write': {'src/a': 'better\n'}, 'answer': done(responses=responses)}],
+                     a: [{'answer': review([finding()])}, {'answer': review(resolutions=[resolution()])}],
+                     b: [{'answer': self.COLLIDING},
+                         {'answer': review([finding()]), 'match': self.COLLISION},
+                         {'answer': review(resolutions=[resolution('make/SC-1')])}]})
+
+    def collided(self, a, b):
+        run = self.the_run(); state = run.state['tasks']['make']
+        return self.ledger(), state['status'], state['rejected_reviews'], (
+            self.count('make'), self.count(a), self.count(b))
+
+    def test_repair_eligibility_is_decided_by_the_ledger_that_applies_it(self):
+        """fnd: repair eligibility is decided by the ledger that applies it (FND-27)"""
+        a, b = self.setup_panel()
+        self.collision(a, b)
+        self.assertEqual(self.start(), 0, self.output)  # no exception escapes the engine
+        ledger, status, entries, counts = self.collided(a, b)
+        self.assertEqual(status, 'accepted')
+        self.assertEqual(counts, (2, 2, 3))  # SC re-called once, inside its existing tries
+        self.assertEqual([f['id'] for f in ledger['findings']], ['make/PE-1', 'make/SC-1'])
+        self.assertEqual(ledger['next_ids'], {'PE': 1, 'SC': 1})
+        with open(self.task_file(b, 'round-1', 'invocation-2', 'prompt.md')) as fh:
+            self.assertIn("supplied 'make/PE-1'", fh.read())
+        first = os.path.relpath(self.task_file(b, 'round-1', 'invocation-1'), self.the_run().path)
+        self.assertEqual([(e['reviewer'], e['try'], e['invocation']) for e in entries], [(b, 1, first)])
+        self.assertIn("supplied 'make/PE-1'", entries[0]['error'])
+        self.assertEqual(self.read_json(b, 'round-1', 'invocation-1', 'outcome.json')['status'],
+                         'protocol-error')
+        self.check_invariants()
+        # The same run, killed at panel:applied and resumed, reaches the same ledger.
+        class Killed(Exception): pass
+        kills = []
+        def crash(point):
+            if point == 'panel:applied' and not kills:
+                kills.append(point); raise Killed()
+        self.collision(a, b, run_no=1)
+        self.cli.CRASH = crash
+        with self.assertRaises(Killed): self.start()
+        self.cli.CRASH = None
+        self.assertEqual([f['id'] for f in self.ledger()['findings']], ['make/PE-1', 'make/SC-1'])
+        self.assertEqual(self.resume(), 0, self.output)
+        again = self.collided(a, b)
+        self.assertEqual(again[:2], (ledger, status))
+        self.assertEqual([(e['reviewer'], e['try']) for e in again[2]], [(b, 1)])
+        self.assertEqual(again[3], counts)
+        self.check_invariants()
+
+    def test_a_coordinator_rejection_survives_replay_exactly_once(self):
+        """fnd: a coordinator rejection survives replay exactly once (FND-29)"""
+        from unittest import mock
+        from taskrunner import panels
+        a, b = self.setup_panel()
+        self.collision(a, b)
+        self.assertEqual(self.start(), 0, self.output)
+        uninterrupted = self.collided(a, b)
+        self.collision(a, b, run_no=1)
+        class Killed(Exception): pass
+        original, calls = panels.Panels.reject_answer, []
+        def killed_before_save(eng, job, producer_id, **kwargs):
+            calls.append(dict(job))
+            if len(calls) == 1:  # the coordinator's refusal: collection accepted SC's answer
+                with mock.patch.object(eng, 'save', side_effect=Killed):
+                    return original(eng, job, producer_id, **kwargs)
+            return original(eng, job, producer_id, **kwargs)
+        with mock.patch.object(panels.Panels, 'reject_answer', killed_before_save):
+            with self.assertRaises(Killed): self.start()
+            self.assertEqual(self.resume(), 0, self.output)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([(c['task'], c['tries'], c['result']['status']) for c in calls],
+                         [(b, 1, 'ok'), (b, 1, 'ok')])
+        ledger, status, entries, counts = self.collided(a, b)
+        run = self.the_run()
+        first = os.path.relpath(self.task_file(b, 'round-1', 'invocation-1'), run.path)
+        self.assertEqual([(e['reviewer'], e['try'], e['invocation']) for e in entries], [(b, 1, first)])
+        self.assertEqual([f['id'] for f in ledger['findings']], ['make/PE-1', 'make/SC-1'])
+        self.assertEqual(ledger['next_ids'], {'PE': 1, 'SC': 1})
+        self.assertEqual((ledger, status, counts), (uninterrupted[0], uninterrupted[1], uninterrupted[3]))
+        self.check_invariants()
+
     def test_reader_detects_ledger_tampering(self):
         from taskrunner import agents,validate
         a,b=self.setup_panel()

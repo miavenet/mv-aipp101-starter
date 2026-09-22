@@ -29,20 +29,20 @@ class Findings(unittest.TestCase):
 
     def test_unique_ids_and_complete_history(self):
         a = self.initial()
-        b, _ = f.apply_review(f.empty('other'), R, review([finding()]), 'C1', {})
+        b, _, _repair = f.apply_review(f.empty('other'), R, review([finding()]), 'C1', {})
         self.assertNotEqual(a['findings'][0]['id'], b['findings'][0]['id'])
         a = f.respond(a, done(responses=[dict(finding='make/PE-1', action='fixed', note='Fixed')]), 2)
-        a, verdict = f.apply_review(a, R, review(resolutions=[resolution()]), 'C2', {})
+        a, verdict, _repair = f.apply_review(a, R, review(resolutions=[resolution()]), 'C2', {})
         self.assertEqual(verdict, 'pass')
         self.assertEqual([x['event'] for x in a['findings'][0]['history']], ['raised','response','resolution'])
         self.assertEqual(a['reviewers'][R['id']]['last_seen_candidate'], 'C2')
 
     def test_advisory_override_and_noted_resolutions(self):
-        a, verdict = f.apply_review(f.empty('make'), dict(R, advisory=True),
+        a, verdict, _repair = f.apply_review(f.empty('make'), dict(R, advisory=True),
                                   review([finding()], verdict='pass'), 'C1', {})
         self.assertEqual((verdict, a['findings'][0]['status']), ('pass','noted'))
         self.assertEqual(f.needing_response(a), [])
-        a, _ = f.apply_review(a, R, review(), 'C2', {})
+        a, _, _repair = f.apply_review(a, R, review(), 'C2', {})
         self.assertEqual(a['reviewers'][R['id']]['round'], 2)
 
     def test_invalid_verdict_and_resolution_are_atomic(self):
@@ -53,30 +53,114 @@ class Findings(unittest.TestCase):
             with self.assertRaises(f.ProtocolError):
                 f.apply_review(a, R, answer, 'C2', {})
             self.assertEqual(a, original)
-        a, verdict = f.apply_review(a, R, review(resolutions=[resolution(status='unresolved')]), 'C2', {})
+        a, verdict, _repair = f.apply_review(a, R, review(resolutions=[resolution(status='unresolved')]), 'C2', {})
         self.assertEqual(verdict, 'block')
 
-    def test_a_new_finding_listed_as_a_resolution_is_rejected_with_the_required_ids(self):
-        """The field failure: a first-round reviewer put its own new finding, by title, in
-        resolutions. The diagnostic must say what is required so that the retry can comply."""
+    def test_a_meaningless_resolution_is_dropped_the_finding_is_kept(self):
+        """fnd: a meaningless resolution is dropped, the finding is kept (FND-21). The field
+        failure: a first-round reviewer put its own new finding, by title, in resolutions."""
         ledger = f.empty('make'); original = copy.deepcopy(ledger)
         answer = review([finding()], resolutions=[dict(finding='Fix this', status='unresolved', note='n')])
-        with self.assertRaises(f.ProtocolError) as ctx:
-            f.apply_review(ledger, R, answer, 'C1', {})
-        self.assertIn('required none, so resolutions must be []', str(ctx.exception))
-        self.assertIn("supplied 'Fix this'", str(ctx.exception))
-        self.assertEqual(ledger, original)
+        kept = copy.deepcopy(answer)
+        result, verdict, repair = f.apply_review(ledger, R, answer, 'C1', {})
+        self.assertEqual(verdict, 'block')
+        self.assertEqual([(x['id'], x['status']) for x in f.blockers(result)], [('make/PE-1', 'open')])
+        self.assertEqual([x['id'] for x in f.needing_response(result)], ['make/PE-1'])
+        self.assertEqual(repair, {'kind': f.REPAIR_DROPPED_RESOLUTIONS,
+                                  'dropped': [{'finding': 'Fix this', 'status': 'unresolved'}],
+                                  'why': 'the round required no resolutions and no entry named '
+                                         'a finding in the ledger'})
+        # Exactly what the answer with resolutions [] would have produced, and nothing else moved.
+        self.assertEqual(result, f.apply_review(ledger, R, dict(answer, resolutions=[]), 'C1', {})[0])
+        self.assertEqual((ledger, answer), (original, kept))
+
+    def test_a_meaningless_resolution_is_redacted_and_bounded_in_the_repair_record(self):
+        """fnd: a meaningless resolution is dropped, the finding is kept (FND-21, agent text)"""
+        from taskrunner import proc
+        token = 'sk-ant-' + 'a' * 40
+        dropped = token + ' ' + 'x' * 300
+        answer = review([finding()], resolutions=[dict(finding=dropped, status='resolved', note='n')])
+        _ledger, _verdict, repair = f.apply_review(f.empty('make'), R, answer, 'C1', {})
+        text = repair['dropped'][0]['finding']
+        self.assertNotIn(token, text)
+        self.assertIn(proc.REDACTED.decode(), text)
+        self.assertEqual(len(text), 201)
+        self.assertTrue(text.endswith('…'))
+
+    def test_a_real_id_is_never_repaired_away(self):
+        """fnd: a real id is never repaired away (FND-22). Today's diagnostic, and atomicity."""
+        ledger = f.apply_review(f.empty('make'), S, review([finding()]), 'C1', {})[0]
+        original = copy.deepcopy(ledger)
+        for supplied in (['make/SC-1'], ['Fix this', 'make/SC-1']):
+            with self.subTest(supplied=supplied):
+                answer = review([finding()], resolutions=[dict(finding=fid, status='unresolved', note='n')
+                                                          for fid in supplied])
+                with self.assertRaises(f.ProtocolError) as ctx:
+                    f.apply_review(ledger, R, answer, 'C1', {})
+                self.assertIn('required none, so resolutions must be []', str(ctx.exception))
+                self.assertIn("supplied " + ', '.join(map(repr, supplied)), str(ctx.exception))
+                self.assertIn('A new finding belongs in findings only, never in resolutions',
+                              str(ctx.exception))
+                self.assertEqual(ledger, original)
+        # A closed finding's id is still a real id.
+        closed = copy.deepcopy(ledger); closed['findings'][0]['status'] = 'resolved'
+        with self.assertRaises(f.ProtocolError):
+            f.apply_review(closed, R, review([finding()], resolutions=[resolution('make/SC-1')]), 'C1', {})
+
+    def test_no_repair_while_a_resolution_is_required(self):
+        """fnd: no repair while a resolution is required (FND-23)"""
+        a = self.initial(); original = copy.deepcopy(a)
+        for answer in (review(resolutions=[dict(finding='Fix this', status='unresolved', note='n')]),
+                       review([finding()], resolutions=[dict(finding='Fix this', status='resolved', note='n')])):
+            with self.assertRaises(f.ProtocolError) as ctx:
+                f.apply_review(a, R, answer, 'C2', {'src/a': [(2, 3)]})
+            self.assertIn('required make/PE-1', str(ctx.exception))
+            self.assertIn("supplied 'Fix this'", str(ctx.exception))
+            self.assertEqual(a, original)
         with self.assertRaises(f.ProtocolError) as ctx:
             f.apply_review(self.initial(), R, review(), 'C2', {})
         self.assertIn('required make/PE-1', str(ctx.exception))
+
+    def test_a_repair_never_produces_a_pass(self):
+        """fnd: a repair never produces a pass (FND-24)"""
+        junk = [dict(finding='looks fine to me', status='resolved', note='n')]
+        advisory = dict(R, advisory=True)
+        for reviewer, answer in [(R, review(resolutions=junk, verdict='pass')),
+                                 (R, review([finding(severity='advisory')], resolutions=junk, verdict='pass')),
+                                 (advisory, review([finding()], resolutions=junk, verdict='pass')),
+                                 (advisory, review([finding()], resolutions=junk, verdict='block'))]:
+            with self.subTest(reviewer=reviewer, answer=answer):
+                ledger = f.empty('make'); original = copy.deepcopy(ledger)
+                with self.assertRaises(f.ProtocolError) as ctx:
+                    f.apply_review(ledger, reviewer, answer, 'C1', {})
+                self.assertIn('required none, so resolutions must be []', str(ctx.exception))
+                self.assertIn("supplied 'looks fine to me'", str(ctx.exception))
+                self.assertEqual(ledger, original)
+        # A later round whose only new blocker falls outside the rework derives a pass: no repair.
+        a = f.apply_review(f.empty('make'), R, review(), 'C1', {})[0]
+        with self.assertRaises(f.ProtocolError) as ctx:
+            f.apply_review(a, R, review([finding('src/a:9')], resolutions=junk), 'C2', {'src/a': [(2, 3)]})
+        self.assertIn('required none, so resolutions must be []', str(ctx.exception))
+
+    def test_valid_answers_are_untouched(self):
+        """fnd: valid answers are untouched (FND-26)"""
+        a, verdict, repair = f.apply_review(f.empty('make'), R, review([finding()]), 'C1', {})
+        self.assertEqual((verdict, repair), ('block', None))
+        a = f.respond(a, done(responses=[dict(finding='make/PE-1', action='fixed', note='Fixed')]), 2)
+        a, verdict, repair = f.apply_review(a, R, review(resolutions=[resolution()]), 'C2', {})
+        self.assertEqual((verdict, repair), ('pass', None))
+        a, verdict, repair = f.apply_review(a, S, review([finding(severity='advisory')]), 'C2', {})
+        self.assertEqual((verdict, repair), ('pass', None))
+        for x in a['findings']:
+            self.assertNotIn('repair', [h['event'] for h in x['history']])
 
     def test_later_blockers_require_changed_location_or_cause(self):
         for location, cause, expected in [('src/a:2','','blocking'),('src/a:9','','advisory'),
                                           ('caller:8','src/a:2','blocking'),
                                           ('caller:8','src/a:9','advisory')]:
             with self.subTest(location=location,cause=cause):
-                a, _ = f.apply_review(f.empty('make'), R, review(), 'C1', {})
-                a, _ = f.apply_review(a, R, review([finding(location,caused_by=cause)],
+                a, _, _repair = f.apply_review(f.empty('make'), R, review(), 'C1', {})
+                a, _, _repair = f.apply_review(a, R, review([finding(location,caused_by=cause)],
                                      verdict='block' if expected=='blocking' else 'pass'),
                                      'C4', {'src/a': [(2,3)]})
                 self.assertEqual(a['findings'][0]['severity'], expected)
@@ -91,7 +175,7 @@ class Findings(unittest.TestCase):
             f.apply_review(a, R, answer, 'C2', {'src/a': [(2, 3)]})
         self.assertEqual(a, original)
         answer['findings'][0]['location'] = 'src/a:2'
-        fixed, verdict = f.apply_review(a, R, answer, 'C2', {'src/a': [(2, 3)]})
+        fixed, verdict, _repair = f.apply_review(a, R, answer, 'C2', {'src/a': [(2, 3)]})
         self.assertEqual(verdict, 'block')
         self.assertEqual(fixed['findings'][-1]['severity'], 'blocking')
 
@@ -101,13 +185,13 @@ class Findings(unittest.TestCase):
         self.assertEqual(f.needing_response(a), [])
         self.assertEqual(len(f.feedback(a)['info']), 1)
         a = f.respond(a, done(), 3)
-        a, _ = f.apply_review(a,R,review(resolutions=[resolution(status='unresolved')]),'C3',{})
+        a, _, _repair = f.apply_review(a,R,review(resolutions=[resolution(status='unresolved')]),'C3',{})
         self.assertEqual(len(f.needing_response(a)),1)
 
     def test_dispute_escalation_and_human_decisions(self):
         a = self.initial()
         a = f.respond(a, done(responses=[dict(finding='make/PE-1',action='disputed',note='why')]), 2)
-        a, _ = f.apply_review(a,R,review(resolutions=[resolution(status='unresolved')]),'C2',{})
+        a, _, _repair = f.apply_review(a,R,review(resolutions=[resolution(status='unresolved')]),'C2',{})
         self.assertEqual(a['findings'][0]['status'],'escalated')
         for decision in ('resolved','advisory'):
             self.assertEqual(f.blockers(f.resolve(a,'make/PE-1',decision)),[])
@@ -119,6 +203,6 @@ class Findings(unittest.TestCase):
     def test_retry_supersedes_and_preserves_id_sequence(self):
         a = f.restart(self.initial())
         self.assertEqual(a['findings'][0]['status'],'superseded')
-        a, _ = f.apply_review(a,R,review([finding()]),'C5',{})
+        a, _, _repair = f.apply_review(a,R,review([finding()]),'C5',{})
         self.assertEqual(a['findings'][-1]['id'],'make/PE-2')
         self.assertEqual(a['reviewers'][R['id']]['round'],1)

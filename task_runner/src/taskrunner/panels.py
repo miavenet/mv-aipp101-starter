@@ -49,6 +49,9 @@ def _review_summary(structured):
     return verdict, review_findings, unreadable
 
 
+_ANSWERED = object()  # dispatch_panel's result when every job has a result and the step goes on
+
+
 class Panels:
     def reviewers_of(self, tid):
         return [self.tasks[i] for i in self.order if self.tasks[i].get('reviews') == tid]
@@ -146,6 +149,54 @@ class Panels:
                 self.collect_reader(job, outcome, tid, candidate)
         self.save()
         while True:
+            stopped = self.dispatch_panel(task, panel, candidate)
+            if stopped is not _ANSWERED:
+                return stopped
+            failed_checks=[j for j in panel['jobs'] if j['kind']=='check' and j['result']['result']!='pass']
+            if failed_checks:
+                j=failed_checks[0]; self.st(j['task']).update(status='objected',reason='check did not pass')
+                self.close_panel(panel, void=True)
+                return self.send_back(task,'check',f"check '{j['task']}' did not pass",j['result']['tail'])
+            broken=[j for j in panel['jobs'] if j['kind']=='review' and j['result']['status']!='ok']
+            if broken:
+                for j in panel['jobs']:
+                    self.st(j['task']).update(status='objected' if j in broken or
+                        j['result'].get('verdict') == 'block' else 'accepted',reason='')
+                self.close_panel(panel, void=True)
+                return self.end(task,'blocked','review panel could not produce valid answers: '+
+                                '; '.join(j['task']+': '+j['result']['error'] for j in broken))
+            # Final application decides: each reviewer meets the ledger as it stands at its turn in
+            # workflow order, which collection could not see. A refusal discards the local ledger
+            # and sends that answer back through the rejection transition; the rest are re-applied
+            # to a fresh copy on the next pass, so no id is consumed twice.
+            ledger=self.ledger(tid); verdicts={}
+            for job in panel['jobs']:
+                if job['kind']!='review':
+                    continue
+                try:
+                    ledger, verdicts[job['task']], _repair=findings.apply_review(
+                        ledger,self.tasks[job['task']],job['result']['answer'],candidate,job['changes'])
+                except findings.ProtocolError as exc:
+                    self.reject_answer(job, tid, status=agents.PROTOCOL_ERROR, error=str(exc),
+                                       structured=job['result']['answer'])
+                    break
+            else:
+                break
+        for job in panel['jobs']:
+            verdict=verdicts.get(job['task'])
+            self.st(job['task']).update(status='objected' if verdict=='block' else 'accepted',reason='')
+        # The ledger and next step move in the same state write: crash replay cannot duplicate ids.
+        st.update(ledger=ledger,step='escalation')
+        self.run.save()
+        self.close_panel(panel)
+        self.save()
+        self.crash('panel:applied')
+        return self.panel_decision(task)
+
+    def dispatch_panel(self, task, panel, candidate):
+        """Call readers until every job has a result. Returns _ANSWERED, or the step's end."""
+        tid = task['id']
+        while True:
             for job in panel['jobs']:
                 if job['kind'] == 'review' and job['result'] is None and job['tries'] >= 3:
                     job['result'] = {'status': agents.PROTOCOL_ERROR,
@@ -180,34 +231,7 @@ class Panels:
                 self.collect_reader(job, outcome, tid, candidate)
             self.save()
             self.crash('panel:batch-recorded')
-        failed_checks=[j for j in panel['jobs'] if j['kind']=='check' and j['result']['result']!='pass']
-        if failed_checks:
-            j=failed_checks[0]; self.st(j['task']).update(status='objected',reason='check did not pass')
-            self.close_panel(panel, void=True)
-            return self.send_back(task,'check',f"check '{j['task']}' did not pass",j['result']['tail'])
-        broken=[j for j in panel['jobs'] if j['kind']=='review' and j['result']['status']!='ok']
-        if broken:
-            for j in panel['jobs']:
-                self.st(j['task']).update(status='objected' if j in broken or
-                    j['result'].get('verdict') == 'block' else 'accepted',reason='')
-            self.close_panel(panel, void=True)
-            return self.end(task,'blocked','review panel could not produce valid answers: '+
-                            '; '.join(j['task']+': '+j['result']['error'] for j in broken))
-        ledger=self.ledger(tid)
-        for job in panel['jobs']:
-            if job['kind']=='review':
-                ledger, verdict=findings.apply_review(ledger,self.tasks[job['task']],job['result']['answer'],
-                                                     candidate,job['changes'])
-                self.st(job['task']).update(status='objected' if verdict=='block' else 'accepted',reason='')
-            else:
-                self.st(job['task']).update(status='accepted',reason='')
-        # The ledger and next step move in the same state write: crash replay cannot duplicate ids.
-        st.update(ledger=ledger,step='escalation')
-        self.run.save()
-        self.close_panel(panel)
-        self.save()
-        self.crash('panel:applied')
-        return self.panel_decision(task)
+        return _ANSWERED
 
     def collect_reader(self, job, outcome, tid, candidate):
         from .engine import EngineStop
@@ -226,8 +250,9 @@ class Panels:
             raise EngineStop(f"environment failure in reviewer '{job['task']}': {outcome.error}")
         if outcome.status == agents.OK:
             try:
-                _, verdict = findings.apply_review(self.ledger(tid), self.tasks[job['task']],
-                                                    outcome.structured, candidate, job['changes'])
+                # Provisional: the coordinator's final application decides (see `panel`).
+                _, verdict, _repair = findings.apply_review(self.ledger(tid), self.tasks[job['task']],
+                                                            outcome.structured, candidate, job['changes'])
             except findings.ProtocolError as exc:
                 outcome.status, outcome.error = agents.PROTOCOL_ERROR, str(exc)
             else:

@@ -6,9 +6,10 @@ finding kept open from an author response that has not yet been reviewed.
 import copy
 import re
 
-from . import validate
+from . import proc, validate
 
 OPEN = {'open', 'disputed', 'escalated'}
+REPAIR_DROPPED_RESOLUTIONS = 'dropped_resolutions'
 
 
 class ProtocolError(ValueError):
@@ -68,7 +69,16 @@ def inside(location, changes):
     return location in changes
 
 
+def _dropped_text(text):
+    """Agent text bound for the repair record: redacted, then cut to 200 characters."""
+    text = proc.redact(text.encode('utf-8', 'surrogateescape')).decode('utf-8', 'surrogateescape')
+    return text if len(text) <= 200 else text[:200] + '…'
+
+
 def apply_review(ledger, reviewer, answer, candidate, changes):
+    """Returns (ledger, verdict, repair). `repair` is None, or the record of the one repair
+    this function is allowed to make. Atomic as before: on ProtocolError the caller's ledger is
+    untouched, because every mutation happens on a deep copy that is then discarded."""
     errors = validate.check_shape(answer, validate.REVIEW)
     if errors:
         raise ProtocolError('; '.join(errors))
@@ -76,10 +86,33 @@ def apply_review(ledger, reviewer, answer, candidate, changes):
     required = {f['id'] for f in blockers(ledger, rid)}
     supplied = [r['finding'] for r in answer['resolutions']]
     if len(supplied) != len(set(supplied)) or set(supplied) != required:
-        raise ProtocolError('resolutions must cover exactly this reviewer\'s open blocking findings, each once'
-                            + ': required ' + (', '.join(sorted(required)) or 'none, so resolutions must be []')
-                            + '; supplied ' + (', '.join(map(repr, supplied)) or 'none')
-                            + '. A new finding belongs in findings only, never in resolutions')
+        error = ProtocolError('resolutions must cover exactly this reviewer\'s open blocking findings, each once'
+                              + ': required ' + (', '.join(sorted(required)) or 'none, so resolutions must be []')
+                              + '; supplied ' + (', '.join(map(repr, supplied)) or 'none')
+                              + '. A new finding belongs in findings only, never in resolutions')
+        # The one repair: [] is provably the only correct value, no entry names any ledger id
+        # (never a similarity test), and the answer still derives a block, so it cannot pass.
+        known = {f['id'] for f in ledger['findings']}
+        if required or not supplied or any(fid in known for fid in supplied):
+            raise error
+        try:
+            result, verdict = _apply(ledger, reviewer, dict(answer, resolutions=[]), candidate, changes)
+        except ProtocolError:
+            raise error from None
+        if verdict != 'block':
+            raise error
+        repair = {'kind': REPAIR_DROPPED_RESOLUTIONS,
+                  'dropped': [{'finding': _dropped_text(r['finding']), 'status': r['status']}
+                              for r in answer['resolutions']],
+                  'why': 'the round required no resolutions and no entry named a finding in the ledger'}
+        return result, verdict, repair
+    result, verdict = _apply(ledger, reviewer, answer, candidate, changes)
+    return result, verdict, None
+
+
+def _apply(ledger, reviewer, answer, candidate, changes):
+    """The ledger transition for an answer whose resolutions match the required set."""
+    rid = reviewer['id']
     result = copy.deepcopy(ledger)
     previous = result['reviewers'].get(rid, {})
     round_no = previous.get('round', 0) + 1

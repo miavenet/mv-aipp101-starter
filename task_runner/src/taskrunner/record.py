@@ -785,6 +785,28 @@ def _reconcile_restore(run, git, it, crash, **_):
     return f"{it['op']} restore: run again from the pinned target and verified"
 
 
+def _reconcile_recover(run, git, it, crash, **_):
+    """Put the set-aside work back again from the pinned candidate and open the transaction from
+    the intent, whatever the state already shows: only the intent says the recovery is done."""
+    task, head = it["task"], git.head()
+    if head != it["head"]:
+        raise ReconcileError(f"the set-aside work of '{task}' was being put back on commit "
+                             f"{it['head']}, but the branch tip is now {head}. Nothing was restored")
+    if run.state.get("expect"):
+        # A run stopped by a failed restore expected the tree it left behind. `reconcile` has
+        # checked it; the replay below changes the tree, so a crash in it must not leave that
+        # expectation to refuse the next `resume`. The intent's `head` still guards the branch.
+        run.state["expect"] = None
+        run.save()
+    git.restore(it["target"], it["paths"], expected_tree=it["expected"],
+                index_file=run.index_file, crash=crash)
+    from . import engine
+    engine.open_transaction(run, git, task, it["base"],
+                            {"record": {"attempt": it["attempt"]}, "paths": it["paths"]}, it["op"])
+    return (f"{it['op']} recovery of '{task}': the set-aside work of attempt {it['attempt']} is "
+            "back, verified, and the transaction is open")
+
+
 def _reconcile_decision(run, git, it, **_):
     run.write_decision(os.path.join(run.path, it["path"]), it["payload"])
     run.finish(it["op"], path=it["path"])
@@ -869,7 +891,7 @@ _RECONCILERS = {"replan": _reconcile_replan, "branch": _reconcile_branch,
                 "commit": _reconcile_commit, "restore": _reconcile_restore, "pin": _reconcile_pin,
                 "patch": _reconcile_patch, "close": _reconcile_close, "revert": _reconcile_revert,
                 "agent": _reconcile_agent, "command": _reconcile_command,
-                "decision": _reconcile_decision}
+                "decision": _reconcile_decision, "recover": _reconcile_recover}
 
 
 # -- rendering ----------------------------------------------------------------------------------

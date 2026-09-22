@@ -1896,5 +1896,268 @@ class RetryAdoptsTip(EngineCase):
                      "runner made it")
 
 
+NOTICE = "your earlier work was set aside and is back in place"
+BACK = {"match": NOTICE, "write": {"src/a.txt": "good\n"}, "answer": done()}
+
+
+class RecoveryTransaction(EngineCase):
+    """The `recover` intent: the set-aside work is put back at the start of the next transaction,
+    `resume` settles a crash at every point of it from the intent, and a request that no longer
+    holds stops the run with nothing restored (G1)."""
+    POINTS = ["recover:before-restore", "restore:after-removals", "recover:after-restore"]
+    SAVES = 5            # `open_transaction`: its own save, the pin's begin and finish, the
+                         # recover intent's finish, and the last save
+
+    def queue(self):
+        """A failed producer whose set-aside work is queued to be put back."""
+        self.workflow(WIDE)
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         0, self.output)
+        self.script([BACK])
+
+    def kill_at(self, point=None, save=None):
+        """Stop at `point`, or at the `save`-th state save after the work was restored."""
+        seen = {"restored": False, "saves": 0}
+
+        def hook(where):
+            if where == "recover:after-restore":
+                seen["restored"] = True
+            if save is None and where == point:
+                raise Killed(where)
+            if save is not None and seen["restored"] and where == "state:before-rename":
+                seen["saves"] += 1
+                if seen["saves"] == save:
+                    raise Killed(f"save {save}")
+        self.cli.CRASH = hook
+
+    def assert_recovered_once(self):
+        self.assertEqual(self.status("make"), "accepted", self.output)
+        self.assertEqual(self.calls(), 1)                           # the attempt ran once
+        self.assertTrue(os.path.isdir(self.task_file("make", "attempt-2")))
+        self.assertFalse(os.path.exists(self.task_file("make", "attempt-3")))
+        self.assertEqual(self.prompt(1).count(NOTICE), 1)
+        self.assertEqual(self.git_out("show", "HEAD:src/notes.txt"), "kept work")
+        self.assertEqual(self.git_out("show", "HEAD:src/a.txt"), "good")
+        st = self.the_run().state["tasks"]["make"]
+        self.assertNotIn("recover", st)
+        self.assertEqual((st["recovered"]["attempt"], st["recovered"]["files"]), (1, 2))
+        recovered = [e for e in events(self) if e["event"] == "recovered"]
+        self.assertEqual([(e["task"], e["attempt"], e["files"]) for e in recovered],
+                         [("make", 1, 2)])
+        self.check_invariants()
+
+    def test_the_work_is_put_back_under_an_intent(self):
+        """The recovery is intent, effect, outcome; the owner is told before the task starts"""
+        self.queue()
+        self.assertEqual(self.resume(), 0, self.output)
+        lines = self.output.splitlines()
+        self.assertIn("make: put back the set-aside work of attempt 1 (2 files)", lines)
+        self.assertLess(lines.index("make: put back the set-aside work of attempt 1 (2 files)"),
+                        lines.index("make: started"))
+        log = events(self)
+        intent = [e for e in log if e["event"] == "intent" and e["kind"] == "recover"]
+        outcome = [e for e in log if e["event"] == "outcome" and e["kind"] == "recover"]
+        self.assertEqual(len(intent), 1)
+        self.assertEqual([(e["op"], e["restored"], e["attempt"]) for e in outcome],
+                         [(intent[0]["op"], 2, 1)])
+        self.assertEqual(self.the_run().state["tasks"]["make"]["recovered"]["op"], intent[0]["op"])
+        self.assert_recovered_once()
+
+    def test_set_aside_work_survives_a_replan(self):
+        """fail: set-aside work survives a replan (FAIL-08)"""
+        self.workflow(WIDE)
+        self.script([{"write": {"src/a.txt": "bad\n", "src/notes.txt": "kept work\n"},
+                      "answer": {"outcome": "blocked", "summary": "", "responses": [],
+                                 "blocked_reason": "The brief contradicts the gate."}}])
+        self.assertEqual(self.start(), 255)
+        attempt_one = self.task_file("make", "attempt-1")
+        digest = tree_digest(attempt_one)
+        with open(self.task_file("make", "failed.patch"), "rb") as fh:
+            patch = fh.read()
+        with open(self.wf_path, encoding="utf-8") as fh:
+            text = fh.read()
+        self.write("wf.toml", text.replace("Make src/a.txt say good.",
+                                           "Make src/a.txt say good, and keep the notes."))
+        self.commit()
+        self.assertEqual(self.runner("replan", "latest", "-C", self.root), 0, self.output)
+        self.assertEqual(self.status("make"), "pending")
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         0, self.output)
+        self.script([BACK])
+        self.assertEqual(self.resume(), 0, self.output)
+        self.assertIn("make: put back the set-aside work of attempt 1 (2 files)", self.output)
+        self.assertIn("keep the notes", self.prompt(1))
+        self.assertEqual(tree_digest(attempt_one), digest)      # no finished attempt changed
+        with open(self.task_file("make", "failed.patch"), "rb") as fh:
+            self.assertEqual(fh.read(), patch)
+        self.assert_recovered_once()                            # attempt 2 continues the series
+
+    def test_recovery_is_resumable(self):
+        """rec: recovery is resumable (REC-14)"""
+        cases = [{"point": p} for p in self.POINTS] + [{"save": n}
+                                                       for n in range(1, self.SAVES + 1)]
+        for where in cases:
+            with self.subTest(**where):
+                self.setUp()
+                self.queue()
+                self.kill_at(**where)
+                with self.assertRaises(Killed):
+                    self.resume()
+                self.cli.CRASH = None
+                state = self.the_run().state
+                open_intent = any(i["kind"] == "recover" for i in state["intents"])
+                # Until the recover intent's own finish is on disk (the 4th save), it is open.
+                self.assertEqual(open_intent, where.get("save", 0) <= 4, state["intents"])
+                if where.get("save") in (2, 3, 4):      # the transaction is already on disk
+                    self.assertEqual(state["active_producer"], "make")
+                self.assertEqual(self.resume(), 0, self.output)
+                if open_intent:
+                    self.assertIn("recovery of 'make': the set-aside work of attempt 1 is back",
+                                  self.output)
+                self.assert_recovered_once()
+                self.doCleanups()
+
+    def test_a_half_installed_transaction_is_completed_from_the_intent(self):
+        """rec: recovery is resumable (REC-14: the state already shows the transaction, while the
+        request is still queued and nothing says the work is back)"""
+        self.queue()
+        self.kill_at("recover:after-restore")
+        with self.assertRaises(Killed):
+            self.resume()
+        self.cli.CRASH = None
+        run = self.the_run()
+        run.state["active_producer"] = "make"
+        run.state["tasks"]["make"].update(status="running", step="attempt", feedback=None,
+                                          base=self.git_out("rev-parse", "HEAD^{tree}"))
+        self.assertIn("recover", run.state["tasks"]["make"])
+        self.assertNotIn("recovered", run.state["tasks"]["make"])
+        run.save()
+        self.assertEqual(self.resume(), 0, self.output)
+        self.assert_recovered_once()
+
+    def test_a_moved_branch_stops_an_interrupted_recovery(self):
+        """rec: a moved branch stops an interrupted recovery (REC-15)"""
+        self.queue()
+        self.kill_at("recover:before-restore")
+        with self.assertRaises(Killed):
+            self.resume()
+        self.cli.CRASH = None
+        expected = self.git_out("rev-parse", "HEAD")
+        git(self.root, "commit", "-q", "--allow-empty", "-m", "the same tree")
+        found = self.git_out("rev-parse", "HEAD")
+        self.assertEqual(self.git_out("rev-parse", f"{expected}^{{tree}}"),
+                         self.git_out("rev-parse", "HEAD^{tree}"))
+        state_before = self.the_run().state
+        before = untouched_digest(self)
+        self.assertEqual(self.resume(), 2)
+        self.assertIn("reconciliation error: the set-aside work of 'make' was being put back on "
+                      f"commit {expected}, but the branch tip is now {found}. Nothing was "
+                      "restored", self.output)
+        self.assertEqual(untouched_digest(self), before)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "src/notes.txt")))
+        state = self.the_run().state
+        self.assertEqual(state["intents"], state_before["intents"])     # nothing settled
+        self.assertIsNone(state.get("active_producer"))                 # no transaction opened
+        st = state["tasks"]["make"]
+        self.assertEqual(st["status"], "pending")
+        self.assertIn("recover", st)
+        self.assertNotIn("recovered", st)
+        self.assertEqual(self.calls(), 0)
+
+    def test_an_invalid_queued_recovery_stops_the_run(self):
+        """fail: an invalid queued recovery can be cancelled (FAIL-15, the refusal)"""
+        self.queue()
+        queued = self.the_run().state["tasks"]["make"]["recover"]
+        narrow = revised_workflow(self, WIDE.replace('writes = ["src/**"]',
+                                                     'writes = ["src/a.txt"]'))
+        self.assertEqual(self.runner("replan", "latest", "--workflow", narrow, "-C", self.root),
+                         0, self.output)
+        # The request is carried across the replan (task 8 of the design makes `replan` do this).
+        run = self.the_run()
+        run.state["tasks"]["make"]["recover"] = queued
+        run.save()
+        with open(self.task_file("make", "failed.patch"), "rb") as fh:
+            patch = fh.read()
+        refusal = ("the set-aside work of 'make' (attempt 1) cannot be put back: it changed "
+                   "src/notes.txt, which 'make' may no longer write. Nothing was changed. Retry "
+                   "without --apply-patch to start clean.")
+        for _ in range(2):                                      # a second resume refuses alike
+            self.assertEqual(self.resume(), 2, self.output)
+            self.assertIn(f"runner: {refusal}", self.output)
+            self.assertNotIn("put back the set-aside work", self.output)
+            self.assertFalse(os.path.exists(os.path.join(self.root, "src/notes.txt")))
+            self.assertEqual(self.git_out("status", "--porcelain"), "")
+            state = self.the_run().state
+            st = state["tasks"]["make"]
+            self.assertEqual((st["status"], st["recover"]), ("pending", queued))
+            self.assertNotIn("recovered", st)
+            self.assertIsNone(state.get("active_producer"))
+            self.assertEqual([i for i in state["intents"] if i["kind"] == "recover"], [])
+            self.assertEqual(self.calls(), 0)
+            with open(self.task_file("make", "failed.patch"), "rb") as fh:
+                self.assertEqual(fh.read(), patch)
+        self.assertFalse([e for e in events(self) if e["event"] == "intent"
+                          and e["kind"] == "recover"])
+
+        # Cancelled, the next attempt starts clean.
+        self.assertEqual(self.runner("retry", "latest", "make", "-C", self.root), 0, self.output)
+        self.script([{"write": {"src/a.txt": "good\n"}, "answer": done()}])
+        self.assertEqual(self.resume(), 0, self.output)
+        self.assertNotIn(NOTICE, self.prompt(1))
+        self.assertFalse(os.path.exists(os.path.join(self.root, "src/notes.txt")))
+        self.check_invariants()
+
+
+    def test_an_interrupted_recovery_is_not_retried(self):
+        """rec: recovery is resumable (REC-14: `retry` refuses while the intent is open, with or
+        without the flag, and writes nothing; `resume` then finishes the recovery)"""
+        self.queue()
+        self.kill_at("restore:after-removals")
+        with self.assertRaises(Killed):
+            self.resume()
+        self.cli.CRASH = None
+        op = [i["op"] for i in self.the_run().state["intents"] if i["kind"] == "recover"][0]
+        before = untouched_digest(self)
+        for flags in ((), ("--apply-patch",)):
+            with self.subTest(flags=flags):
+                self.assertEqual(self.runner("retry", "latest", "make", *flags, "-C", self.root),
+                                 2)
+                self.assertEqual(self.output,
+                                 f"runner: putting back the set-aside work of 'make' was "
+                                 f"interrupted ({op}); `runner resume` finishes it first. "
+                                 "Nothing was changed\n")
+                self.assertEqual(untouched_digest(self), before)
+        self.assertIn("recover", self.the_run().state["tasks"]["make"])
+        self.assertEqual(self.resume(), 0, self.output)
+        self.assert_recovered_once()
+
+    def test_a_failed_restore_then_an_interrupted_replay_resumes(self):
+        """rec: recovery is resumable (REC-14: a restore that failed, then a replay interrupted
+        after it changed the tree, is still finished by the next `resume`)"""
+        self.queue()
+
+        def broken(where):
+            if where == "restore:after-removals":
+                raise OSError("the disk is full")
+        self.cli.CRASH = broken
+        self.assertEqual(self.resume(), 2, self.output)
+        self.assertIn("environment failure", self.output)
+        state = self.the_run().state
+        self.assertIsNotNone(state["expect"])
+        self.assertEqual([i["kind"] for i in state["intents"]], ["recover"])
+
+        self.kill_at("restore:before-verify")  # the replay has changed the tree by then
+        with self.assertRaises(Killed):
+            self.resume()
+        self.cli.CRASH = None
+        self.assertTrue(os.path.exists(os.path.join(self.root, "src/notes.txt")))
+        self.assertEqual([i["kind"] for i in self.the_run().state["intents"]], ["recover"])
+        self.assertEqual(self.resume(), 0, self.output)
+        self.assertNotIn("work tree changed", self.output)
+        self.assert_recovered_once()
+
+
 if __name__ == "__main__":
     unittest.main()

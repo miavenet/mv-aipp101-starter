@@ -81,9 +81,7 @@ class Engine(ProviderRouting, Panels):
         return self.git.snapshot(self.run.index_file)
 
     def pin(self, name, obj):
-        op = self.run.begin("pin", name=name, object=obj)
-        self.git.pin(self.run.name, name, obj)
-        self.run.finish(op, ref=name)
+        _pin(self.run, self.git, name, obj)
 
     def restore(self, target, paths, expected):
         """Put `paths` back to `target` under an intent, so a crash in the middle is repaired."""
@@ -312,32 +310,35 @@ class Engine(ProviderRouting, Panels):
     # -- the producer transaction (A1) -------------------------------------------------------
 
     def begin_transaction(self, task):
-        tid, st = task["id"], self.st(task["id"])
+        """Open the producer's transaction. A queued recovery is checked again here, against the
+        tree as it is now, and the intent is recorded before any state changes, so a refusal
+        leaves the task pending with its request queued and a crash is settled from the intent."""
+        tid = task["id"]
         base = self.snapshot()
         if base != self.git.tree_of("HEAD") or not self.git.is_clean():
             raise EngineStop(f"the work tree is not at a clean accepted state, so '{tid}' cannot "
                              "start: " + ", ".join(self.git.dirty_paths()[:10]))
-        queued = queued_recovery(self.run, self.git, tid)
-        st.pop("recover", None)
-        st.pop("apply_patch", None)
-        self.run.state["active_producer"] = tid
-        st.update(status="running", reason="", step="attempt", base=base, candidate=None,
-                  attempts_used=0, session_id=None, feedback=None, last_failure=None,
-                  final=None, sender=None)
-        self.run.save()
-        self.pin(f"{tid}/base", base)
-        if queued:
-            patch = os.path.join(self.run.task_dir(tid), "failed.patch")
+        plan = op = None
+        if queued_recovery(self.run, self.git, tid):
             try:
-                self.git.apply_patch(patch)
-            except gitops.GitError as exc:
-                raise EngineStop(f"the set-aside patch of '{tid}' no longer applies: {exc}") from exc
-            st["feedback"] = {"cause_title": "your earlier work was set aside and is back in place",
-                              "cause": "The work of your earlier attempts has been applied to the "
-                                       "work tree again. Continue from it.\n\n"
-                                       + (st.get("last_cause") or ""),
-                              "needing": [], "info": []}
-        self.save()
+                plan = recovery_plan(self.run, self, self.git, tid)
+            except Refused as exc:
+                raise EngineStop(str(exc)) from exc
+        if plan:
+            rec, paths = plan["record"], plan["paths"]
+            op = self.run.begin("recover", task=tid, attempt=rec["attempt"], head=self.git.head(),
+                                target=rec["candidate"], base=base, expected=plan["expected"],
+                                paths=paths)
+            self.crash("recover:before-restore")
+            try:
+                self.git.restore(rec["candidate"], paths, expected_tree=plan["expected"],
+                                 index_file=self.run.index_file, crash=self.crash)
+            except gitops.RestoreError as exc:
+                raise EngineStop(f"environment failure: {exc}") from exc
+            self.crash("recover:after-restore")
+            self.say(f"{tid}: put back the set-aside work of attempt {rec['attempt']} "
+                     f"({len(paths)} files)")
+        open_transaction(self.run, self.git, tid, base, plan, op)
         self.say(f"{tid}: started")
 
     def advance(self, tid):
@@ -1035,6 +1036,43 @@ def queued_recovery(run, git, tid):
     return {"from": "set-aside", "attempt": rec.get("attempt"), "candidate": rec.get("candidate")}
 
 
+def _pin(run, git, name, obj):
+    op = run.begin("pin", name=name, object=obj)
+    git.pin(run.name, name, obj)
+    run.finish(op, ref=name)
+
+
+def open_transaction(run, git, task_id, base, plan=None, op=None):
+    """The producer's transaction is open, and with `plan` the set-aside work is back: installed
+    whole in memory and saved once, then `<task>/base` pinned and the `recover` intent `op`
+    finished. Every field comes from the arguments, which the engine and `_reconcile_recover`
+    both take from the intent, so running it again over a half-installed transaction completes
+    it. `plan` needs only the record's `attempt` and the `paths` put back."""
+    st = run.state["tasks"][task_id]
+    st.pop("recover", None)
+    st.pop("apply_patch", None)                             # an older runner's request
+    run.state["active_producer"] = task_id
+    st.update(status="running", reason="", step="attempt", base=base, candidate=None,
+              attempts_used=0, session_id=None, feedback=None, last_failure=None,
+              final=None, sender=None)
+    if plan:
+        attempt, files = plan["record"]["attempt"], len(plan["paths"])
+        st["recovered"] = {"attempt": attempt, "at": run.intent(op)["at"], "files": files,
+                           "op": op}
+        st["feedback"] = {"cause_title": "your earlier work was set aside and is back in place",
+                          "cause": "The work of your earlier attempts has been applied to the "
+                                   "work tree again. Continue from it.\n\n"
+                                   + (st.get("last_cause") or ""),
+                          "needing": [], "info": []}
+    run.save()
+    _pin(run, git, f"{task_id}/base", base)
+    if plan:
+        run.finish(op, restored=files, attempt=attempt)
+        run.event("recovered", task=task_id, attempt=attempt, files=files)
+    run.save()
+    run.regenerate()
+
+
 def _config_hash(verifier):
     data = {k: verifier[k] for k in ("id", "kind", "commands", "read_only", "restores",
                                      "timeout_min")}
@@ -1230,6 +1268,13 @@ def retry(run, engine, git, task_id, apply_patch=False):
                       + "), which holds the work tree. Settle that first; nothing was changed")
     st = engine.st(task_id)
     task = engine.tasks[task_id]
+    interrupted = [it["op"] for it in state["intents"]
+                   if it["kind"] == "recover" and it["task"] == task_id]
+    if interrupted:
+        # The work may already be partly back in the tree, and only the intent can finish or
+        # verify that: a retry here would promise a start the next `resume` does not make.
+        raise Refused(f"putting back the set-aside work of '{task_id}' was interrupted "
+                      f"({interrupted[0]}); `runner resume` finishes it first. Nothing was changed")
     rec = set_aside_record(run, git, task_id) if task["kind"] == "produce" else None
     if st["status"] not in ("failed", "blocked") and not (st["status"] == "pending" and rec):
         raise Refused(f"'{task_id}' is {st['status']}; only a failed or blocked task is retried")

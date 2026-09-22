@@ -685,14 +685,15 @@ class Run:
         self._write(os.path.join(self.path, "run.json"), dump_json(info).decode("utf-8"))
         with self._status_lock:
             self._write(os.path.join(self.path, "STATUS.md"),
-                        render_run_status(info, self.state, branch_disposition(info, self.state)))
+                        render_run_status(info, self.state, branch_disposition(info, self.state),
+                                          run_path=self.path))
         for task_id in self.state["order"]:
             tdir = self.task_dir(task_id)
             ledger = self.state["tasks"][task_id].get("ledger")
             if ledger is not None:
                 self.write_decision(os.path.join(tdir, "findings.json"), ledger)
             self._write(os.path.join(tdir, "STATUS.md"),
-                        render_task_status(task_id, self.state["tasks"][task_id], tdir))
+                        render_task_status(task_id, self.state["tasks"][task_id], tdir, self.name))
         for dirpath, dirnames, _files in os.walk(self.path):
             dirnames.sort()
             self._write(os.path.join(dirpath, "index.json"),
@@ -705,7 +706,7 @@ class Run:
         render (the engine may be changing the state under us) just skips the beat."""
         now = now or datetime.datetime.now(datetime.timezone.utc)
         try:
-            text = render_run_status(self.info, self.state, None, now=now)
+            text = render_run_status(self.info, self.state, None, now=now, run_path=self.path)
         except Exception:                                   # noqa: BLE001 - never hurt the run
             return False
         target = os.path.join(self.path, "STATUS.md")
@@ -957,7 +958,24 @@ def _in_flight(state, now):
     return lines
 
 
-def render_run_status(info, state, disposition=None, now=None):
+def _set_aside_record(run_path, t):
+    """The task's published `set-aside.json`, or None. `failed.patch` alone does not mean the
+    work can be put back: an old run already replanned by an older runner may have `failed.patch`
+    with no `set-aside.json` and nothing left to derive it from (C4's failure case), which
+    `--apply-patch` cannot act on."""
+    path = os.path.join(run_path, "tasks", t["dir"], "set-aside.json")
+    return read_json(path) if os.path.exists(path) else None
+
+
+def _has_set_aside(run_path, t):
+    """Is there set-aside work of this task that can still be put back? A record whose `paths`
+    is empty is itself "no set-aside work" (the attempt changed nothing; D9), so `--apply-patch`
+    has nothing to apply."""
+    rec = _set_aside_record(run_path, t)
+    return bool(rec and rec["paths"])
+
+
+def render_run_status(info, state, disposition=None, now=None, run_path=None):
     spend = state["spend"]
     unpriced = spend["unpriced"]
     lines = [f"# {info['workflow']} — run {info['run_id'][:8]} — "
@@ -1036,7 +1054,8 @@ def render_run_status(info, state, disposition=None, now=None):
             if t["kind"] == "human" and t["status"] == "waiting_human" and not t.get("decision"):
                 lines += [f"    runner approve {info['name']} {task_id}",
                           f"    runner reject {info['name']} {task_id} -m \"why\""]
-            elif t["status"] in ("failed", "blocked"):
+            elif t["status"] in ("failed", "blocked") or (
+                    t["status"] == "pending" and t["kind"] == "produce" and _has_set_aside(run_path, t)):
                 lines.append(f"    runner retry {info['name']} {task_id}"
                              + (" [--apply-patch]" if t["kind"] == "produce" else ""))
         for t in state["tasks"].values():
@@ -1047,7 +1066,7 @@ def render_run_status(info, state, disposition=None, now=None):
     return "\n".join(lines) + "\n"
 
 
-def render_task_status(task_id, t, tdir):
+def render_task_status(task_id, t, tdir, run_name):
     lines = [f"# {task_id} — {t['status']}", "", f"Kind {t['kind']}, type {t['type']}."]
     if t["reason"]:
         lines.append(f"Reason: {t['reason']}")
@@ -1061,6 +1080,21 @@ def render_task_status(task_id, t, tdir):
     if os.path.exists(os.path.join(tdir, "failed.patch")):
         lines += ["", "Its work was set aside in failed.patch; the candidate tree is pinned under "
                   "refs/task-runner/."]
+        sa_path = os.path.join(tdir, "set-aside.json")
+        if os.path.exists(sa_path):
+            rec = read_json(sa_path)
+            if rec["paths"]:                        # empty paths: nothing --apply-patch can put back
+                lines.append(f"Set aside from attempt {rec['attempt']} ({rec['status']}: "
+                             f"{rec['reason']}), {len(rec['paths'])} files.")
+                lines.append(f"To put it back before the next attempt: runner retry {run_name} "
+                             f"{task_id} --apply-patch")
+    if t.get("recover"):
+        lines += ["", f"Queued: the set-aside work of attempt {t['recover']['attempt']} will be "
+                  "put back before the next attempt."]
+    elif t.get("recovered"):
+        r = t["recovered"]
+        lines += ["", f"The set-aside work of attempt {r['attempt']} was put back before attempt "
+                  f"{r['attempt'] + 1} ({r['files']} files)."]
     return "\n".join(lines) + "\n"
 
 

@@ -655,5 +655,110 @@ class DecisionPublication(RunCase):
         self.assertEqual(run.state["intents"], [])
 
 
+class SetAsideStatus(RunCase):
+    """STATUS.md tells the way back to set-aside work (G1, task 10)."""
+
+    def record(self, attempt=1, paths=("src/a.py", "src/b.py")):
+        return {"task": "implement", "attempt": attempt, "attempt_dir": f"tasks/020-implement/attempt-{attempt}",
+                "status": "blocked", "reason": "the review panel could not answer in the required form",
+                "at": "2026-09-20T11:02:14Z", "head": "c" * 40, "base": "b" * 40, "candidate": "d" * 40,
+                "candidate_ref": f"refs/task-runner/{self.run_.name}/implement/set-aside",
+                "patch": "tasks/020-implement/failed.patch", "paths": list(paths)}
+
+    def set_aside(self, attempt=1, paths=("src/a.py", "src/b.py")):
+        """Leaves `failed.patch` and a published `set-aside.json` behind, as `engine.set_aside`
+        does, without running the full engine."""
+        tdir = self.run_.task_dir("implement")
+        with open(os.path.join(tdir, "failed.patch"), "w", encoding="utf-8") as fh:
+            fh.write("diff --git a/src/a.py b/src/a.py\n")
+        self.run_.publish_decision(os.path.join(tdir, "set-aside.json"), self.record(attempt, paths))
+
+    def task_status(self):
+        with open(os.path.join(self.run_.task_dir("implement"), "STATUS.md")) as fh:
+            return fh.read()
+
+    def run_status(self):
+        with open(os.path.join(self.run_.path, "STATUS.md")) as fh:
+            return fh.read()
+
+    def test_replan_keeps_the_way_back_to_set_aside_work(self):
+        """run: replan keeps the way back to set-aside work (RUN-18, STATUS.md)"""
+        self.set_aside()
+        # A replan resets an affected task's state to {dir, attempts, cost_usd[, recover]}; here
+        # there is no queued recovery, only the record that survived on disk.
+        self.run_.state["tasks"]["implement"] = {
+            "status": "pending", "dir": "020-implement", "kind": "produce", "type": "implement",
+            "attempts": 1, "cost_usd": 0.0, "commit": None, "reason": ""}
+        self.run_.save()
+        self.run_.regenerate()
+        task_text = self.task_status()
+        self.assertIn("Set aside from attempt 1 (blocked: the review panel could not answer in "
+                     "the required form), 2 files.", task_text)
+        self.assertIn(f"To put it back before the next attempt: runner retry {self.run_.name} "
+                     "implement --apply-patch", task_text)
+        self.assertIn("## Next", self.run_status())
+        self.assertIn(f"    runner retry {self.run_.name} implement [--apply-patch]",
+                     self.run_status())
+
+    def test_a_queued_recovery_is_shown(self):
+        self.set_aside()
+        self.run_.state["tasks"]["implement"].update(
+            status="pending", recover={"from": "set-aside", "attempt": 1, "candidate": "d" * 40})
+        self.run_.save()
+        self.run_.regenerate()
+        self.assertIn("Queued: the set-aside work of attempt 1 will be put back before the next "
+                     "attempt.", self.task_status())
+
+    def test_recovered_work_is_shown(self):
+        self.set_aside()
+        self.run_.state["tasks"]["implement"].update(
+            status="running", recovered={"attempt": 1, "at": "2026-09-20T11:05:00Z", "files": 2,
+                                         "op": "op-0001-aaaaaaaa"})
+        self.run_.save()
+        self.run_.regenerate()
+        self.assertIn("The set-aside work of attempt 1 was put back before attempt 2 (2 files).",
+                     self.task_status())
+        self.assertNotIn("Queued:", self.task_status())
+
+    def next_section(self):
+        text = self.run_status()
+        return text[text.index("## Next"):]
+
+    def test_a_legacy_record_that_cannot_be_derived_advertises_nothing(self):
+        """pe: an old run already replanned by an older runner has `failed.patch` but no
+        `set-aside.json` and nothing left to derive it from (C4's failure case); `--apply-patch`
+        cannot act on it, so neither STATUS page offers the command (PE-1)"""
+        tdir = self.run_.task_dir("implement")
+        with open(os.path.join(tdir, "failed.patch"), "w", encoding="utf-8") as fh:
+            fh.write("diff --git a/src/a.py b/src/a.py\n")
+        self.run_.state["tasks"]["implement"] = {
+            "status": "pending", "dir": "020-implement", "kind": "produce", "type": "implement",
+            "attempts": 1, "cost_usd": 0.0, "commit": None, "reason": ""}
+        self.run_.save()
+        self.run_.regenerate()
+        task_text = self.task_status()
+        self.assertIn("Its work was set aside in failed.patch", task_text)
+        self.assertNotIn("Set aside from attempt", task_text)
+        self.assertNotIn("To put it back", task_text)
+        self.assertNotIn("implement", self.next_section())
+
+    def test_a_record_with_no_paths_advertises_nothing(self):
+        """pe: a replanned attempt whose set-aside record has `paths: []` (the attempt changed
+        nothing) is itself no set-aside work; `--apply-patch` has nothing to apply, so neither
+        STATUS page offers it, and the task page never promises recovery of zero files (PE-1)"""
+        self.set_aside(paths=[])
+        self.run_.state["tasks"]["implement"] = {
+            "status": "pending", "dir": "020-implement", "kind": "produce", "type": "implement",
+            "attempts": 1, "cost_usd": 0.0, "commit": None, "reason": ""}
+        self.run_.save()
+        self.run_.regenerate()
+        task_text = self.task_status()
+        self.assertIn("Its work was set aside in failed.patch", task_text)
+        self.assertNotIn("Set aside from attempt", task_text)
+        self.assertNotIn("To put it back", task_text)
+        self.assertNotIn("0 files", task_text)
+        self.assertNotIn("implement", self.next_section())
+
+
 if __name__ == "__main__":
     unittest.main()

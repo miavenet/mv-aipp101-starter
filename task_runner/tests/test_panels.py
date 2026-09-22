@@ -370,6 +370,219 @@ gate=["test ! -f src/a"]
         self.assertEqual(entry['unreadable_findings'], 2)
         self.check_invariants()
 
+    def review_job(self, run, rid):
+        return next(j for j in run.state['tasks']['make']['panel']['jobs'] if j['task'] == rid)
+
+    def quota_on(self, rid, calls):
+        """The listed calls of reviewer `rid` report the provider's quota, which refunds their try."""
+        from unittest import mock
+        from taskrunner import agents
+        original, seen = agents.CommandAgent.run, []
+        def run(agent, prompt, **kwargs):
+            answer = original(agent, prompt, **kwargs)
+            if kwargs['env'].get('TASK_RUNNER_TASK') == rid:
+                seen.append(rid)
+                if len(seen) in calls:
+                    answer.status, answer.error = agents.QUOTA, 'usage_limit_reached'
+            return answer
+        patcher = mock.patch.object(agents.CommandAgent, 'run', run)
+        patcher.start(); self.addCleanup(patcher.stop)
+
+    def upgrade(self):
+        """Make the saved state look like one written before job['invocation'] existed."""
+        run = self.the_run()
+        for job in run.state['tasks']['make']['panel']['jobs']:
+            job.pop('invocation', None)
+        run.save()
+
+    def test_answer_refused_at_final_application_is_still_a_rejected_answer(self):
+        """fnd: an answer refused at final application is still a rejected answer (FND-28)"""
+        from taskrunner import agents, record
+        a, b = self.setup_panel()
+        self.script({'make': [GOOD], a: [{'answer': review([finding()])}]*3, b: [PASS]})
+        diagnostic = ("resolutions must cover exactly this reviewer's open blocking findings, each "
+                      "once: required none, so resolutions must be []; supplied 'make/SC-1'")
+        class Killed(Exception): pass
+        def crash(point):
+            if point == 'panel:batch-recorded': raise Killed()
+        self.cli.CRASH = crash
+        before = None
+        for n in (1, 2, 3):
+            with self.assertRaises(Killed):
+                self.start() if n == 1 else self.resume()
+            eng = self.coordinator()
+            if before is None:
+                before = record.dump_json(eng.ledger('make'))
+            job = self.review_job(eng.run, a)
+            # Collection accepted the answer; the coordinator's final application refuses it.
+            self.assertEqual((job['result']['status'], job['tries']), ('ok', n))
+            eng.reject_answer(job, 'make', status=agents.PROTOCOL_ERROR, error=diagnostic,
+                              structured=job['result']['answer'])
+        self.cli.CRASH = None
+        self.assertEqual(self.resume(), 255, self.output)
+        self.assertEqual((self.count(a), self.count(b), self.count('make')), (3, 1, 1))
+        state = self.the_run().state['tasks']['make']
+        self.assertEqual(state['status'], 'blocked')
+        self.assertIn(diagnostic, state['reason'])
+        self.assertNotIn('interrupted calls exhausted protocol retries', state['reason'])
+        entries = state['rejected_reviews']
+        self.assertEqual([e['try'] for e in entries], [1, 2, 3])
+        for n, entry in enumerate(entries, 1):
+            inv = self.task_file(a, 'round-1', f'invocation-{n}')
+            self.assertEqual(entry['invocation'], os.path.relpath(inv, self.the_run().path))
+            self.assertEqual(entry['verdict'], 'block')
+            self.assertEqual([f['title'] for f in entry['findings']], ['Fix this'])
+            outcome = self.read_json(a, 'round-1', f'invocation-{n}', 'outcome.json')
+            self.assertEqual((outcome['status'], outcome['error']), ('protocol-error', diagnostic))
+        with open(self.task_file(a, 'round-1', 'invocation-2', 'prompt.md')) as fh:
+            self.assertIn(diagnostic, fh.read())
+        self.assertEqual(record.dump_json(state['ledger']), before)
+        self.check_invariants()
+
+    def test_panel_checkpointed_before_this_change_is_resumed_with_its_answers(self):
+        """run: a panel checkpointed before this change is resumed with its answers (RUN-26)"""
+        a, b = self.setup_panel()
+        malformed = {'answer': {'verdict': 'block', 'summary': 's', 'resolutions': None,
+                                'findings': [finding()]}}
+        # Call 1 hits the quota (try refunded), call 2 is malformed, call 3 is the next try.
+        self.script({'make': [GOOD], a: [PASS, malformed, PASS], b: [PASS]})
+        self.quota_on(a, {1, 3})
+        self.assertEqual(self.start(), 2, self.output)
+        run = self.the_run(); run.state.pop('provider_quota', None); run.save()
+        class Killed(Exception): pass
+        def crash(point):
+            if point == 'panel:outcomes-recorded': raise Killed()
+        self.cli.CRASH = crash
+        with self.assertRaises(Killed): self.resume()
+        self.cli.CRASH = None
+        run = self.the_run()
+        job = self.review_job(run, a)
+        self.assertEqual(job['tries'], 1)
+        self.assertIn('raw_outcome', job)
+        self.upgrade()
+        first = self.task_file(a, 'round-1', 'invocation-1', 'outcome.json')
+        with open(first, 'rb') as fh: quota_bytes = fh.read()
+        ledger = self.read_json('make', 'findings.json') if os.path.exists(
+            self.task_file('make', 'findings.json')) else None
+        self.assertEqual(self.resume(), 2, self.output)  # the next try hits the quota again
+        run = self.the_run(); state = run.state['tasks']['make']
+        second = os.path.relpath(self.task_file(a, 'round-1', 'invocation-2'), run.path)
+        entries = state['rejected_reviews']
+        self.assertEqual([(e['invocation'], e['try']) for e in entries], [(second, 1)])
+        self.assertEqual([f['title'] for f in entries[0]['findings']], ['Fix this'])
+        self.assertEqual(self.read_json(a, 'round-1', 'invocation-2', 'outcome.json')['status'],
+                         'protocol-error')
+        with open(first, 'rb') as fh: self.assertEqual(fh.read(), quota_bytes)
+        self.assertNotIn('invocation-1', json.dumps(state['rejected_reviews']))
+        job = self.review_job(run, a)
+        self.assertEqual(job['tries'], 1)
+        self.assertEqual(job['invocation'],
+                         os.path.relpath(self.task_file(a, 'round-1', 'invocation-3'), run.path))
+        self.assertEqual(self.count(a), 3)
+        self.assertEqual(state.get('ledger', {}).get('findings', []), [])
+        if ledger is not None:
+            self.assertEqual(self.read_json('make', 'findings.json'), ledger)
+        self.check_invariants()
+
+    def test_recovered_invocation_survives_a_crash_before_the_rejection_is_saved(self):
+        """run: a panel checkpointed before this change is resumed with its answers (RUN-26, adopted then killed)"""
+        from unittest import mock
+        from taskrunner import panels
+        a, b = self.setup_panel()
+        # Adapter-valid, so the ledger check refuses it and its outcome.json is rewritten from ok.
+        self.script({'make': [GOOD], a: [{'answer': review([finding()], verdict='pass')}, PASS],
+                     b: [PASS]})
+        self.quota_on(a, {2})
+        class Killed(Exception): pass
+        def crash(point):
+            if point == 'panel:outcomes-recorded': raise Killed()
+        self.cli.CRASH = crash
+        with self.assertRaises(Killed): self.start()
+        self.cli.CRASH = None
+        self.upgrade()
+        original, calls = panels.Panels.reject_answer, []
+        def killed_before_save(eng, job, producer_id, **kwargs):
+            calls.append(dict(job))
+            if len(calls) == 1:
+                with mock.patch.object(eng, 'save', side_effect=Killed):
+                    return original(eng, job, producer_id, **kwargs)
+            return original(eng, job, producer_id, **kwargs)
+        with mock.patch.object(panels.Panels, 'reject_answer', killed_before_save):
+            with self.assertRaises(Killed): self.resume()
+            self.assertEqual(self.resume(), 2, self.output)  # the next try hits the quota
+        run = self.the_run()
+        first = os.path.relpath(self.task_file(a, 'round-1', 'invocation-1'), run.path)
+        self.assertEqual([c['invocation'] for c in calls], [first, first])
+        entries = run.state['tasks']['make']['rejected_reviews']
+        self.assertEqual([(e['invocation'], e['try']) for e in entries], [(first, 1)])
+        outcome = self.read_json(a, 'round-1', 'invocation-1', 'outcome.json')
+        self.assertEqual(outcome['status'], 'protocol-error')
+        self.assertIn('verdict disagrees with ledger', outcome['error'])
+
+    def refused_recovery(self, variant):
+        """RUN-27's sequence for one kind of refusal: the highest-numbered invocation's
+        outcome.json is `absent`, or present and `mismatched` with the persisted raw_outcome."""
+        from unittest import mock
+        from taskrunner import panels
+        malformed = {'answer': {'verdict': 'block', 'summary': 's', 'resolutions': None,
+                                'findings': [finding()]}}
+        a, b = self.setup_panel()
+        self.quota_on(a, {2})
+        self.script({'make': [GOOD], a: [malformed, PASS], b: [PASS]})
+        class Killed(Exception): pass
+        def crash(point):
+            if point == 'panel:outcomes-recorded': raise Killed()
+        self.cli.CRASH = crash
+        with self.assertRaises(Killed): self.start()
+        self.cli.CRASH = None
+        self.upgrade()
+        outcome = self.task_file(a, 'round-1', 'invocation-1', 'outcome.json')
+        if variant == 'absent':
+            os.unlink(outcome)
+        else:
+            written = self.read_json(a, 'round-1', 'invocation-1', 'outcome.json')
+            with open(outcome, 'wb') as fh:
+                fh.write(json.dumps(dict(written, seconds=written['seconds'] + 1)).encode())
+            with open(outcome, 'rb') as fh: kept = fh.read()
+        # Killed once after the summary was appended and before it was saved: replay.
+        original, calls = panels.Panels.reject_answer, []
+        def killed_before_save(eng, job, producer_id, **kwargs):
+            calls.append(dict(job))
+            if len(calls) == 1:
+                with mock.patch.object(eng, 'save', side_effect=Killed):
+                    return original(eng, job, producer_id, **kwargs)
+            return original(eng, job, producer_id, **kwargs)
+        with mock.patch.object(panels.Panels, 'reject_answer', killed_before_save):
+            with self.assertRaises(Killed): self.resume()
+            self.assertEqual(self.resume(), 2, self.output)  # the next try hits the quota
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([c['invocation'] for c in calls], [None, None])
+        self.assertTrue(all('raw_outcome' not in c for c in calls))
+        run = self.the_run(); state = run.state['tasks']['make']
+        entries = state['rejected_reviews']
+        self.assertEqual(len(entries), 1)
+        self.assertIsNone(entries[0]['invocation'])
+        self.assertEqual(entries[0]['verdict'], 'block')
+        self.assertEqual([f['title'] for f in entries[0]['findings']], ['Fix this'])
+        self.assertIn('resolutions', entries[0]['error'])
+        if variant == 'absent':
+            self.assertFalse(os.path.exists(outcome))
+        else:
+            with open(outcome, 'rb') as fh: self.assertEqual(fh.read(), kept)
+        job = self.review_job(run, a)
+        self.assertEqual(job['invocation'],
+            os.path.relpath(self.task_file(a, 'round-1', 'invocation-2'), run.path))
+        self.assertEqual(self.read_json(a, 'round-1', 'invocation-2', 'outcome.json')['status'],
+                         'quota')
+
+    def test_refused_recovery_stays_refused_through_the_rejection(self):
+        """run: a refused recovery stays refused through the rejection (RUN-27)"""
+        self.refused_recovery('mismatched')
+
+    def test_refused_recovery_stays_refused_through_the_rejection_when_outcome_is_absent(self):
+        """run: a refused recovery stays refused through the rejection (RUN-27, outcome absent)"""
+        self.refused_recovery('absent')
+
     def test_reader_detects_ledger_tampering(self):
         from taskrunner import agents,validate
         a,b=self.setup_panel()

@@ -133,6 +133,12 @@ class Panels:
             # Recovery from an interrupted reader: do not trust any results from that panel.
             self.restore_panel(task, 'interrupted reader changed the candidate')
             return self.end(task,'failed','a reviewer or read-only check changed the candidate during interruption')
+        adopting = [job for job in panel['jobs'] if job['kind'] == 'review' and 'invocation' not in job]
+        for job in adopting:
+            self.adopt_invocation(job)
+        if adopting:
+            # Durable before the replay: a rejection rewrites the outcome.json that corroborated it.
+            self.save()
         for job in panel['jobs']:
             if 'raw_outcome' in job:
                 raw = job['raw_outcome']
@@ -143,7 +149,8 @@ class Panels:
             for job in panel['jobs']:
                 if job['kind'] == 'review' and job['result'] is None and job['tries'] >= 3:
                     job['result'] = {'status': agents.PROTOCOL_ERROR,
-                                     'error': 'interrupted calls exhausted protocol retries'}
+                                     'error': job.get('protocol_error') or
+                                              'interrupted calls exhausted protocol retries'}
             pending = [j for j in panel['jobs'] if j['result'] is None]
             if not pending:
                 break
@@ -225,13 +232,57 @@ class Panels:
                 outcome.status, outcome.error = agents.PROTOCOL_ERROR, str(exc)
             else:
                 job['result'] = {'status': 'ok', 'answer': outcome.structured, 'verdict': verdict}
-        if outcome.status == agents.PROTOCOL_ERROR:
-            job['protocol_error'] = outcome.error
-        if outcome.status != agents.OK:
-            if outcome.status != agents.PROTOCOL_ERROR or job['tries'] >= 3:
-                job['result'] = {'status': outcome.status, 'error': outcome.error}
         self.run.event('review-call', task=job['task'], status=outcome.status,
                        round=job['round'], error=outcome.error)
+        if outcome.status == agents.PROTOCOL_ERROR:
+            self.reject_answer(job, tid, status=outcome.status, error=outcome.error,
+                               structured=outcome.structured)
+        elif outcome.status != agents.OK:
+            job['result'] = {'status': outcome.status, 'error': outcome.error}
+
+    def adopt_invocation(self, job):
+        """Decide, once per dispatch, which invocation directory a job saved before this change is
+        carrying, and record that decision in job['invocation'] — the path, or None when the call
+        cannot be identified with certainty. Returns the stored value. Never dispatches, never writes
+        inside an invocation directory, and never touches tries."""
+        if 'invocation' in job:
+            return job['invocation']
+        job['invocation'] = None
+        directory = os.path.join(self.run.path, job['directory'])
+        if job['kind'] != 'review' or not os.path.isdir(directory):
+            return None
+        # Directory order, never tries: a refunded quota call keeps its number while tries fall.
+        numbers = [int(name[len('invocation-'):]) for name in os.listdir(directory)
+                   if name.startswith('invocation-') and name[len('invocation-'):].isdigit()]
+        if not numbers:
+            return None
+        invocation = os.path.join(job['directory'], f'invocation-{max(numbers)}')
+        try:
+            written = record.read_json(os.path.join(self.run.path, invocation, 'outcome.json'))
+        except (OSError, ValueError):
+            return None
+        if 'raw_outcome' in job:
+            expected = {k: v for k, v in job['raw_outcome'].items() if k != 'structured'}
+            if written != expected:
+                return None
+        job['invocation'] = invocation
+        return invocation
+
+    def reject_answer(self, job, producer_id, *, status, error, structured):
+        """The one place an answer becomes a rejected answer, whether it was refused at collection
+        or at final application. Summarises it, corrects its invocation's outcome.json, keeps the
+        diagnostic for the next prompt, and decides between another try and a final result."""
+        self.adopt_invocation(job)
+        self.note_rejected_answer(job, producer_id, status=status, error=error, structured=structured)
+        job['protocol_error'] = error
+        if status == agents.PROTOCOL_ERROR and job['tries'] < 3:
+            job['result'] = None
+        else:
+            job['result'] = {'status': status, 'error': error}
+        self.run.event('review-answer-rejected', task=job['task'], producer=producer_id,
+                       round=job['round'], status=status, error=error,
+                       invocation=job.get('invocation'), **{'try': job['tries']})
+        self.save()
 
     def note_rejected_answer(self, job, producer_id, *, status, error, structured):
         """Summarise one rejected review answer into the producer's state, and correct the
@@ -346,6 +397,7 @@ class Panels:
             job,t=item['job'],item['task']; directory=os.path.join(self.run.path,job['directory'])
             if job['kind']=='review':
                 _,inv=self.run.new_invocation(directory); item['inv']=inv
+                job['invocation']=os.path.relpath(inv,self.run.path)
                 record.write_durable(os.path.join(inv, 'prompt.md'), item['prompt'].encode())
                 reservation=budgets.cap_for(item['agent'],t)
                 self.run.state['spend']['reserved_usd']+=reservation

@@ -1059,11 +1059,7 @@ def open_transaction(run, git, task_id, base, plan=None, op=None):
         attempt, files = plan["record"]["attempt"], len(plan["paths"])
         st["recovered"] = {"attempt": attempt, "at": run.intent(op)["at"], "files": files,
                            "op": op}
-        st["feedback"] = {"cause_title": "your earlier work was set aside and is back in place",
-                          "cause": "The work of your earlier attempts has been applied to the "
-                                   "work tree again. Continue from it.\n\n"
-                                   + (st.get("last_cause") or ""),
-                          "needing": [], "info": []}
+        st["feedback"] = {"recovered": {"attempt": attempt, "paths": plan["paths"]}}
     run.save()
     _pin(run, git, f"{task_id}/base", base)
     if plan:

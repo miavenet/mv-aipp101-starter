@@ -122,29 +122,50 @@ def diff_text(diff, cap_bytes, full_path=""):
     return fence("diff", gitops.cap_diff(diff, cap_bytes, full_path))
 
 
+def recovered_section(recovered):
+    """The author's notice that earlier work is already in the tree (R3), verbatim. `recovered`
+    is a dict: attempt (int), paths (the files put back) - exactly what the `recover` intent
+    carries, so a reconciled recovery renders the same notice as a live one."""
+    return "\n".join([
+        "# Earlier work of this task is already in the work tree", "",
+        f"The work of attempt {recovered['attempt']} of this task was set aside, and the runner "
+        "has now put it back into the work tree, unchanged. These files already hold it:", "",
+        fence("recovered files", "\n".join(recovered["paths"])), "",
+        "Continue from this work. Read these files before you change them. Do not start over, and "
+        "do not revert what is there: it is yours, from an earlier attempt of this same task."])
+
+
 def feedback_text(feedback, cap_bytes):
-    """What a rework prompt holds (B1): the immediate cause, then every open blocking finding that
-    still needs a response, then what is given for information only. `feedback` is a dict:
-    cause (text), cause_title, needing (findings), info (findings or notes)."""
+    """What a rework prompt holds (B1). `feedback` is a dict: recovered (optional), cause,
+    cause_title, needing (findings), info (findings or notes). The recovered section is rendered
+    first and on its own when there is no cause, no finding needing a response and nothing for
+    information."""
     if not feedback:
         return ""
-    parts = ["# Your previous attempt was not accepted", "",
-             "## Why", "", fence("cause title", feedback.get("cause_title", "the work was sent back")), "",
-             fence("cause", feedback.get("cause", ""))]
-    needing = feedback.get("needing", [])
-    if needing:
-        block = "\n\n".join(_finding(f) for f in needing)
-        if _size(block) > cap_bytes:
-            raise FindingsTooLarge(f"{len(needing)} findings need a response and take "
-                                   f"{_size(block)} bytes; the limit is {cap_bytes}. None is dropped")
-        parts += ["", "## Findings that need a response", "",
-                  "Answer each of these in `responses`, once, with `fixed` or `disputed`.", "",
-                  fence("findings", block)]
-    info = feedback.get("info", [])
-    if info:
-        parts += ["", "## For information, no response needed", "",
-                  fence("information", "\n\n".join(_finding(f) for f in info))]
-    return "\n".join(parts)
+    sections = []
+    recovered = feedback.get("recovered")
+    if recovered:
+        sections.append(recovered_section(recovered))
+    if feedback.get("cause") or feedback.get("cause_title") or feedback.get("needing") \
+            or feedback.get("info"):
+        parts = ["# Your previous attempt was not accepted", "",
+                 "## Why", "", fence("cause title", feedback.get("cause_title", "the work was sent back")), "",
+                 fence("cause", feedback.get("cause", ""))]
+        needing = feedback.get("needing", [])
+        if needing:
+            block = "\n\n".join(_finding(f) for f in needing)
+            if _size(block) > cap_bytes:
+                raise FindingsTooLarge(f"{len(needing)} findings need a response and take "
+                                       f"{_size(block)} bytes; the limit is {cap_bytes}. None is dropped")
+            parts += ["", "## Findings that need a response", "",
+                      "Answer each of these in `responses`, once, with `fixed` or `disputed`.", "",
+                      fence("findings", block)]
+        info = feedback.get("info", [])
+        if info:
+            parts += ["", "## For information, no response needed", "",
+                      fence("information", "\n\n".join(_finding(f) for f in info))]
+        sections.append("\n".join(parts))
+    return "\n\n".join(sections)
 
 
 def _finding(f):
@@ -173,6 +194,8 @@ def response_ids_text(feedback):
 
 def produce_prompt(task, template, *, brief, inputs, feedback, attempt, frozen, caps):
     """The full prompt of a producer's attempt, from its type's template."""
+    recovered = (feedback or {}).get("recovered")
+    plain_feedback = {k: v for k, v in feedback.items() if k != "recovered"} if feedback else feedback
     values = {
         "task.id": "\n" + fence("task id", task["id"]) + "\n",
         "task.title": "\n" + fence("task title", task["title"]) + "\n",
@@ -180,13 +203,28 @@ def produce_prompt(task, template, *, brief, inputs, feedback, attempt, frozen, 
         "inputs": inputs_text(inputs, caps["inputs_cap_bytes"]),
         "outputs": outputs_text(task), "gates": gates_text(task),
         "rules": rules_text(task.get("protected", []), frozen, task.get("writes")),
-        "findings": feedback_text(feedback, caps["findings_cap_bytes"]),
+        "findings": feedback_text(plain_feedback, caps["findings_cap_bytes"]),
         "attempt": str(attempt), "max_attempts": str(task.get("max_attempts", "")),
         "result_schema": result_schema_text("produce") + response_ids_text(feedback),
     }
     for name, value in (task.get("params") or {}).items():
         values[f"param.{name}"] = "\n" + fence(f"parameter {name}", str(value)) + "\n"
-    return substitute(template, values)
+    working = template
+    if recovered and "{findings}" in template:
+        # However many times the template repeats `{findings}`, the recovery notice must appear
+        # exactly once (R3): attached at only the first occurrence, before substitution runs. Put
+        # behind its own placeholder, never spliced into the template text directly, so a recovered
+        # path that happens to look like `{a.placeholder}` is filled in by `substitute`'s one pass
+        # and never rescanned - it stays literal, the same guarantee every other value gets.
+        values["__recovered__"] = recovered_section(recovered)
+        working = template.replace("{findings}", "{__recovered__}\n\n{findings}", 1)
+    rendered = substitute(working, values)
+    if recovered and "{findings}" not in template:
+        # R3 is unconditional: a type template that omits `{findings}` must not silently drop the
+        # notice that earlier work is already in the tree. Checked on the template text itself,
+        # before substitution, so a brief that quotes the section's heading cannot suppress it.
+        rendered += "\n\n" + recovered_section(recovered)
+    return rendered
 
 
 def rework_prompt(task, *, feedback, caps):

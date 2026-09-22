@@ -12,7 +12,7 @@ import subprocess
 import sys
 import unittest
 
-from helpers import RUNNER, EngineCase, done, git
+from helpers import FAKE_AGENT, RUNNER, EngineCase, done, git
 
 from taskrunner import agents, engine, gitops, prompts, record, validate
 
@@ -762,7 +762,7 @@ gate = ["true"]
         self.assertEqual(self.status("after"), "skipped")
 
         # With the patch: the base still matches, so the work is put back and attempts restart.
-        self.script([{"match": "set aside and is back in place",
+        self.script([{"match": "Earlier work of this task is already in the work tree",
                       "write": {"src/a.txt": "good\n"}, "answer": done()}])
         self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
                          0, self.output)
@@ -793,7 +793,7 @@ gate = ["true"]
         self.script([GOOD])
         self.assertEqual(self.runner("retry", "latest", "make", "-C", self.root), 0)
         self.assertEqual(self.resume(), 0, self.output)
-        self.assertNotIn("set aside and is back", self.prompt(1))         # a clean start
+        self.assertNotIn("Earlier work of this task", self.prompt(1))     # a clean start
         self.check_invariants()
 
     def test_recovery_leaves_the_record_alone(self):
@@ -1559,7 +1559,6 @@ class RetryRecovery(EngineCase):
         # The next attempt starts from the accepted tree, with nothing put back.
         self.script([{"write": {"src/a.txt": "good\n"}, "answer": done()}])
         self.assertEqual(self.resume(), 0, self.output)
-        self.assertNotIn("set aside and is back", self.prompt(1))
         self.assertNotIn("Earlier work of this task", self.prompt(1))
         self.assertFalse(os.path.exists(os.path.join(self.root, "src/notes.txt")))
         self.check_invariants()
@@ -1577,7 +1576,7 @@ class RetryRecovery(EngineCase):
         self.assertNotIn("recover", self.the_run().state["tasks"]["make"])
         self.script([{"write": {"src/a.txt": "good\n"}, "answer": done()}])
         self.assertEqual(self.resume(), 0, self.output)
-        self.assertNotIn("set aside and is back", self.prompt(1))
+        self.assertNotIn("Earlier work of this task", self.prompt(1))
         self.assertFalse(os.path.exists(os.path.join(self.root, "src/notes.txt")))
         self.check_invariants()
 
@@ -1896,7 +1895,7 @@ class RetryAdoptsTip(EngineCase):
                      "runner made it")
 
 
-NOTICE = "your earlier work was set aside and is back in place"
+NOTICE = "# Earlier work of this task is already in the work tree"
 BACK = {"match": NOTICE, "write": {"src/a.txt": "good\n"}, "answer": done()}
 
 
@@ -1993,6 +1992,67 @@ class RecoveryTransaction(EngineCase):
         with open(self.task_file("make", "failed.patch"), "rb") as fh:
             self.assertEqual(fh.read(), patch)
         self.assert_recovered_once()                            # attempt 2 continues the series
+
+    def test_the_author_is_told_about_recovered_work(self):
+        """fail: the author is told about recovered work (FAIL-12)"""
+        self.queue()
+        self.assertEqual(self.resume(), 0, self.output)
+        prompt = self.prompt(1)
+        self.assertEqual(prompt.count(NOTICE), 1)
+        self.assertIn("The work of attempt 1 of this task was set aside, and the runner has "
+                      "now put it back into the work tree, unchanged. These files already "
+                      "hold it:", prompt)
+        self.assertEqual(prompt.count("<<<DATA recovered files\nsrc/a.txt\nsrc/notes.txt\n"
+                                      "DATA>>>"), 1)
+        self.assertIn("Continue from this work. Read these files before you change them. Do "
+                      "not start over, and do not revert what is there: it is yours, from an "
+                      "earlier attempt of this same task.", prompt)
+        self.assertIn("<<<DATA brief\nMake src/a.txt say good.\nDATA>>>", prompt)       # unchanged
+        self.assert_recovered_once()
+
+    def test_a_template_without_findings_still_gets_the_notice(self):
+        """fail: the author is told about recovered work (FAIL-12, a template without
+        {findings}, and a brief that quotes the section's own heading)"""
+        self.write("lib/types/notice.toml", '''
+name = "notice"
+kind = "produce"
+requires = ["write"]
+prompt = """
+Task {task.id}
+
+{task.prompt}
+
+{outputs}
+{gates}
+
+{rules}
+
+{result_schema}
+"""
+''')
+        header = ('library = ["lib"]\n'
+                  + self.HEADER.format(defaults="", python=sys.executable, agent=FAKE_AGENT)
+                        .replace("'", '"'))
+        tasks = ('[[task]]\nid = "make"\ntype = "notice"\nmax_attempts = 1\n'
+                'prompt = "Make src/a.txt say good.\\n\\n' + NOTICE
+                + '\\nA quote from the owner, not the runner\'s own notice."\n'
+                'outputs = ["src/a.txt"]\nwrites = ["src/**"]\n'
+                'gate = ["grep -q good src/a.txt"]\n')
+        self.wf_path = self.write("wf.toml", header + tasks)
+        self.commit()
+        self.script([WORK])
+        self.assertEqual(self.start(), 2)
+        self.assertEqual(self.runner("retry", "latest", "make", "--apply-patch", "-C", self.root),
+                         0, self.output)
+        self.script([{"write": {"src/a.txt": "good\n"}, "answer": done()}])
+        self.assertEqual(self.resume(), 0, self.output)
+        prompt = self.prompt(1)
+        self.assertNotIn("{findings}", prompt)
+        # The owner's quote is data inside the brief; the runner's own section still follows it.
+        self.assertEqual(prompt.count(NOTICE), 2)
+        self.assertEqual(prompt.count("<<<DATA recovered files\nsrc/a.txt\nsrc/notes.txt\n"
+                                      "DATA>>>"), 1)
+        self.assertEqual(self.status("make"), "accepted", self.output)
 
     def test_recovery_is_resumable(self):
         """rec: recovery is resumable (REC-14)"""

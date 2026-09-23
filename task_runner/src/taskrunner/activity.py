@@ -2,6 +2,8 @@
 from collections import deque
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +19,123 @@ def assets(root, kind):
                 if kind == 'claude' else ['.codex/config.toml', '.codex/hooks.json', '.codex/statusline.py',
                                          '.claude/hooks/log-hook.py'])
     return [root / p for p in relative if (root / p).is_file()]
+
+
+NO_HOOKS = 'no_hooks'
+NO_LOGGER = 'no_logger'
+UNRECORDED = 'unrecorded'
+INSPECTION_FAILED = 'inspection_failed'
+
+_CAUSE_MESSAGES = {
+    NO_HOOKS: 'the work tree has no .claude/settings.json (or settings.local.json) defining hooks',
+    NO_LOGGER: 'hooks are defined but none invokes a logger that writes to HOOK_LOG_DIR',
+    UNRECORDED: 'definitions look right but nothing was recorded (trust prompt, or the profile ignores project settings)',
+    INSPECTION_FAILED: 'hook definitions could not be safely inspected; check .claude/settings.json by hand',
+}
+
+
+def _leaf_hooks(hooks_value):
+    """Yield each leaf hook-definition object under settings.json's "hooks" key.
+
+    Expected shape: {event: [{"matcher": ..., "hooks": [{"type": ..., "command": ..., ...}]}]}.
+    Every level is type-checked before iterating, so an unexpected shape (wrong type,
+    extra nesting, scalars where a container is expected) is skipped rather than raising -
+    this walk is intentionally shallow and never recurses into the leaf objects themselves.
+    """
+    if not isinstance(hooks_value, dict):
+        return
+    for groups in hooks_value.values():
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            leaves = group.get('hooks')
+            if not isinstance(leaves, list):
+                continue
+            for leaf in leaves:
+                if isinstance(leaf, dict):
+                    yield leaf
+
+
+def _hook_definitions(root):
+    """Read-only: every leaf hook-definition object from the work tree's own settings files."""
+    leaves = []
+    for name in ('.claude/settings.json', '.claude/settings.local.json'):
+        path = Path(root) / name
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError, UnicodeError):
+            # Missing file or invalid JSON: treat this file as contributing no hooks. A
+            # RecursionError is different - the file exists and may define hooks, but this
+            # code cannot tell; it must propagate so the caller reports INSPECTION_FAILED
+            # instead of silently agreeing with NO_HOOKS.
+            continue
+        if not isinstance(data, dict):
+            continue
+        leaves.extend(_leaf_hooks(data.get('hooks')))
+    return leaves
+
+
+def _command_tokens(hook):
+    """Every whitespace-separated token from a hook's command and args fields.
+
+    `command` may be exec-form (just the interpreter, e.g. "python3") or shell-form
+    (interpreter and script together, e.g. 'python3 "$X/log-hook.py"'); either way the
+    referenced script is one of the resulting tokens, not the field's raw value.
+    """
+    command = hook.get('command')
+    tokens = []
+    if isinstance(command, str):
+        try:
+            tokens.extend(shlex.split(command))
+        except ValueError:
+            tokens.append(command)
+    args = hook.get('args')
+    if isinstance(args, list):
+        tokens.extend(a for a in args if isinstance(a, str))
+    return tokens
+
+
+# Shell substitution of ${CLAUDE_PROJECT_DIR} or the unbraced $CLAUDE_PROJECT_DIR, the latter
+# only up to a word boundary so it doesn't also consume e.g. $CLAUDE_PROJECT_DIRECTORY.
+_PROJECT_DIR_VAR = re.compile(r'\$\{CLAUDE_PROJECT_DIR\}|\$CLAUDE_PROJECT_DIR\b')
+
+
+def _invokes_hook_log_dir_logger(root, hook):
+    if not isinstance(hook, dict) or hook.get('type') not in (None, 'command'):
+        return False
+    for token in _command_tokens(hook):
+        candidate = _PROJECT_DIR_VAR.sub(lambda _m: str(root), token)
+        path = Path(candidate)
+        if not path.is_absolute():
+            path = Path(root) / candidate
+        try:
+            if path.is_file() and 'HOOK_LOG_DIR' in path.read_text(errors='replace'):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def diagnose_claude_silence(root):
+    """Read-only cause for a Claude profile with no observed native activity.
+
+    Inspects only the work tree's own hook definitions and referenced scripts;
+    never runs anything, and never raises - malformed or adversarial settings.json
+    content degrades to INSPECTION_FAILED rather than aborting the caller.
+    """
+    try:
+        hooks = _hook_definitions(root)
+        if not hooks:
+            cause = NO_HOOKS
+        elif not any(_invokes_hook_log_dir_logger(root, hook) for hook in hooks):
+            cause = NO_LOGGER
+        else:
+            cause = UNRECORDED
+    except (RecursionError, OSError, ValueError, TypeError, AttributeError):
+        cause = INSPECTION_FAILED
+    return cause, _CAUSE_MESSAGES[cause]
 
 
 def prepare(kind, cwd, invocation_dir, env):

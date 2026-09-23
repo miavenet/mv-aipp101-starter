@@ -58,7 +58,15 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
    each claim of a frozen file is intended.
 2. `runner graph WORKFLOW -o wf.dot` if you want to look at the shape.
 3. `runner doctor WORKFLOW`. Qualifies each agent profile per capability. It costs a little money
-   and is cached.
+   and is cached. Each profile also prints an "observed activity" line. For a Claude profile with
+   none, doctor names the cause it found by reading the driven project's own files — never by
+   running anything — rather than a generic hint: no `.claude/settings.json` (or
+   `settings.local.json`) in the work tree defines hooks at all; hooks are defined but none of them
+   invokes a logger that writes to `HOOK_LOG_DIR`; or the definitions look right but nothing was
+   recorded (check the trust prompt, and whether this profile ignores project settings). See
+   [headless observability](headless-observability.md#claude-activity-depends-on-the-driven-projects-own-hooks)
+   for which settings file to add, how `HOOK_LOG_DIR` reaches the logger, and what to copy from
+   this repository to get activity in a target project.
 4. `runner check-gates WORKFLOW` uses disposable copies of the clean repository. Every `new` gate should report **fail**, for the intended reason.
    A `new` gate that passes cannot show the task was done. A gate that leaves files behind must be
    fixed, or its products ignored by git.

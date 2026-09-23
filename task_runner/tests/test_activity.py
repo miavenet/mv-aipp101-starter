@@ -77,6 +77,109 @@ class Activity(unittest.TestCase):
         self.assertEqual(rows[-1]['hook_event_name'],'ExecStream.item.completed')
         self.assertIn('python3 test.py',activity.render(self.root))
 
+    def test_diagnoses_no_hooks_defined_in_the_work_tree(self):
+        cause, message = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.NO_HOOKS)
+        self.assertIn('no .claude/settings.json', message)
+        self.assertIn('settings.local.json', message)
+        # An empty or hook-less settings file is the same cause as no file at all.
+        (self.root / '.claude').mkdir()
+        (self.root / '.claude/settings.json').write_text(json.dumps({'other': True}))
+        self.assertEqual(activity.diagnose_claude_silence(self.root)[0], activity.NO_HOOKS)
+
+    def test_diagnoses_hooks_defined_but_settings_local_also_counts(self):
+        (self.root / '.claude').mkdir()
+        (self.root / '.claude/settings.local.json').write_text(json.dumps(
+            {'hooks': {'Stop': [{'hooks': [{'type': 'command', 'command': 'true'}]}]}}))
+        cause, message = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.NO_LOGGER)
+        self.assertIn('none invokes a logger', message)
+        self.assertIn('HOOK_LOG_DIR', message)
+
+    def test_diagnoses_hooks_defined_but_no_logger_writes_to_hook_log_dir(self):
+        (self.root / '.claude/hooks').mkdir(parents=True)
+        (self.root / '.claude/hooks/log-hook.py').write_text('print("no env var referenced here")\n')
+        (self.root / '.claude/settings.json').write_text(json.dumps({'hooks': {'Stop': [{'hooks': [
+            {'type': 'command', 'command': 'python3',
+             'args': ['${CLAUDE_PROJECT_DIR}/.claude/hooks/log-hook.py']}]}]}}))
+        cause, message = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.NO_LOGGER)
+
+    def test_diagnoses_definitions_look_right_but_nothing_was_recorded(self):
+        (self.root / '.claude/hooks').mkdir(parents=True)
+        (self.root / '.claude/hooks/log-hook.py').write_text(
+            'import os\nos.environ.get("HOOK_LOG_DIR")\n')
+        (self.root / '.claude/settings.json').write_text(json.dumps({'hooks': {'Stop': [{'hooks': [
+            {'type': 'command', 'command': 'python3',
+             'args': ['${CLAUDE_PROJECT_DIR}/.claude/hooks/log-hook.py']}]}]}}))
+        cause, message = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.UNRECORDED)
+        self.assertIn('trust prompt', message)
+
+    def test_diagnosis_never_raises_on_malformed_settings(self):
+        (self.root / '.claude').mkdir()
+        (self.root / '.claude/settings.json').write_text('{not json')
+        cause, _ = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.NO_HOOKS)
+
+    def test_non_string_args_do_not_abort_the_diagnosis(self):
+        (self.root / '.claude').mkdir()
+        (self.root / '.claude/settings.json').write_text(json.dumps({'hooks': {'Stop': [{'hooks': [
+            {'type': 'command', 'command': 'true', 'args': 42}]}]}}))
+        cause, _ = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.NO_LOGGER)
+
+    def test_deeply_nested_settings_json_reports_inspection_failed(self):
+        (self.root / '.claude').mkdir()
+        nested = '{"hooks": ' + '[' * 10000 + ']' * 10000 + '}'
+        (self.root / '.claude/settings.json').write_text(nested)
+        cause, message = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.INSPECTION_FAILED)
+        self.assertIsInstance(message, str)
+
+    def test_shell_form_command_string_is_recognized_as_invoking_the_logger(self):
+        (self.root / '.claude/hooks').mkdir(parents=True)
+        (self.root / '.claude/hooks/log-hook.py').write_text(
+            'import os\nos.environ.get("HOOK_LOG_DIR")\n')
+        (self.root / '.claude/settings.json').write_text(json.dumps({'hooks': {'Stop': [{'hooks': [
+            {'type': 'command',
+             'command': 'python3 "${CLAUDE_PROJECT_DIR}/.claude/hooks/log-hook.py"'}]}]}}))
+        cause, _ = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.UNRECORDED)
+
+    def test_documented_unbraced_project_dir_variable_is_recognized(self):
+        (self.root / '.claude/hooks').mkdir(parents=True)
+        (self.root / '.claude/hooks/log-hook.py').write_text(
+            'import os\nos.environ.get("HOOK_LOG_DIR")\n')
+        (self.root / '.claude/settings.json').write_text(json.dumps({'hooks': {'Stop': [{'hooks': [
+            {'type': 'command',
+             'command': 'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/log-hook.py"'}]}]}}))
+        cause, _ = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.UNRECORDED)
+
+    def test_unbraced_project_dir_variable_respects_word_boundary(self):
+        # A longer variable name that merely starts with $CLAUDE_PROJECT_DIR must be left
+        # untouched - not treated as $CLAUDE_PROJECT_DIR followed by literal extra characters.
+        # This directly catches removing the trailing \b from the substitution regex, which
+        # a test that only checked the final cause would not: without a file sitting at the
+        # wrongly-truncated path, both the correct and the broken regex end up at NO_LOGGER.
+        token = '$CLAUDE_PROJECT_DIRECTORY_NAME/log-hook.py'
+        substituted = activity._PROJECT_DIR_VAR.sub(lambda _m: str(self.root), token)
+        self.assertEqual(substituted, token)
+        (self.root / '.claude').mkdir()
+        (self.root / '.claude/settings.json').write_text(json.dumps({'hooks': {'Stop': [{'hooks': [
+            {'type': 'command', 'command': 'echo $CLAUDE_PROJECT_DIRECTORY_NAME'}]}]}}))
+        cause, _ = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.NO_LOGGER)
+
+    def test_non_command_hooks_are_defined_but_not_a_logger(self):
+        (self.root / '.claude').mkdir()
+        (self.root / '.claude/settings.json').write_text(json.dumps({'hooks': {'Stop': [{'hooks': [
+            {'type': 'prompt', 'prompt': 'Are you sure?'}]}]}}))
+        cause, message = activity.diagnose_claude_silence(self.root)
+        self.assertEqual(cause, activity.NO_LOGGER)
+        self.assertIn('none invokes a logger', message)
+
     def test_checkpoint_events_merge_with_native_activity_by_time(self):
         inv = self.root / 'milestones'; inv.mkdir()
         activity.prepare('claude', str(ROOT), inv, {'TASK_RUNNER_TASK': 'design'})

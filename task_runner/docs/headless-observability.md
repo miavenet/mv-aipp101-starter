@@ -49,6 +49,50 @@ The exec-stream bridge continues to provide tool observations without relaxing
 that trust requirement. See the [official Codex hook documentation](https://learn.chatgpt.com/docs/hooks)
 and [Claude hook reference](https://code.claude.com/docs/en/hooks).
 
+## Claude activity depends on the driven project's own hooks
+
+Native Claude hook activity is not something the runner switches on. It stays
+entirely dependent on hook definitions that live in the work tree being
+driven (the target project), the same way any other Claude Code project
+would configure hooks:
+
+- **The settings file that defines the hooks** is the target project's own
+  `.claude/settings.json` or `.claude/settings.local.json`, at the root of
+  the repository named on the command line — never a file belonging to the
+  task-runner repository itself. `doctor` and every Claude invocation read
+  these two paths (`activity.assets`); `ignore_user_config=true` still loads
+  them, it only skips the user's own `~/.claude/settings.json`.
+- **How `HOOK_LOG_DIR` reaches the logger:** before each Claude invocation
+  the runner (`activity.prepare`) exports `HOOK_LOG_DIR` (and, for Codex,
+  `CODEX_HOOK_LOG`) into the child process's environment, pointing at that
+  invocation's own `hooks/` directory. That is the *only* wiring the runner
+  does. The project's hook command must itself read `HOOK_LOG_DIR` from its
+  environment and write its records under that path — a hook script that
+  logs to a fixed location instead never produces activity the runner can
+  see, even though the hook is correctly configured and firing.
+- **What to copy into a target project to get activity:** this repository's
+  own `.claude/settings.json` (the hook definitions) and
+  `.claude/hooks/log-hook.py` (a logger that already honors `HOOK_LOG_DIR`
+  out of the box). Copying both, unmodified, into the driven project's work
+  tree is sufficient; `doctor` will pick them up on the next qualification
+  because they are hashed into its cache key (`qualification.fingerprint`).
+
+`doctor` distinguishes exactly these possibilities when a Claude profile
+shows no observed activity, from cheapest to fix: no `.claude/settings.json`
+(or `settings.local.json`) defining hooks at all; hooks defined but none of
+them invokes a logger that writes to `HOOK_LOG_DIR`; or definitions that look
+right yet nothing was recorded (worth checking the trust prompt, or whether
+this profile's `ignore_user_config` or CLI flags cause it to ignore project
+settings). Both exec-form (`command`/`args`) and shell-form (a single
+`command` string, e.g. `python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/log-hook.py"`)
+hook commands are recognized; a hook whose `type` is not `command` (a
+`prompt` hook, for example) counts toward "hooks are defined" but never
+toward "invokes a logger". If the settings files themselves cannot be
+parsed safely (malformed or adversarially deep JSON), doctor says so rather
+than guessing or failing qualification. This detection only reads the
+project's own files — it never invokes an agent and never changes a
+capability, gate, or acceptance.
+
 ## Observed live evidence
 
 - A controlled Opus 5 reviewer read a nonce file using its read tool and returned

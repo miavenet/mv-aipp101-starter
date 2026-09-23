@@ -265,7 +265,13 @@ def cmd_doctor(args):
         print(f"{meta['profile']['kind']} {meta['model'] or '(default model)'} {mode}: "
               + (", ".join(entry["capabilities"]) or "no capabilities qualified")
               + (" (cached)" if entry["cached"] else ""))
-        print("  observed activity: " + (", ".join(entry.get("observed_activity", [])) or "none; check hook configuration/trust and stdout.log"))
+        observed = entry.get("observed_activity", [])
+        if observed:
+            print("  observed activity: " + ", ".join(observed))
+        elif entry.get("activity_cause"):
+            print("  observed activity: none; " + entry["activity_cause"]["message"])
+        else:
+            print("  observed activity: none; check hook configuration/trust and stdout.log")
         if entry["orphan_detection"].startswith("weaker"):
             print("warning: orphan detection is weaker on this host")
     print("qualification: " + os.path.join(record.runs_dir_for(gitops.Git(wf.root).top), "qualification.json"))

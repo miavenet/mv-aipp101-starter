@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from helpers import EngineCase, RepoCase, done, run_cli
-from taskrunner import agents, gitops, preflight, qualification, record
+from taskrunner import activity, agents, gitops, preflight, qualification, record
 
 PROBE_AGENT = str(Path(__file__).with_name('probe_agent.py'))
 TASK = '[[task]]\nid="make"\ntype="implement"\nprompt="p"\noutputs=["out.txt"]\ngate=["true"]\n'
@@ -118,6 +118,35 @@ print(json.dumps({'value':p.get('value','I did it')}))
         self.assertIn('answer, read, execute, write', first.stdout)
         second = run_cli('doctor', wf.workflow_file)
         self.assertIn('(cached)', second.stdout)
+
+    def test_doctor_names_the_detected_cause_of_claude_silence(self):
+        wf = self.workflow(kind='claude')
+        self.commit()
+        with patch.dict(agents.REGISTRY, claude=agents.CommandAgent):
+            report = qualification.check_workflow(wf)
+        entry = next(iter(report['profiles'].values()))
+        self.assertEqual(entry['observed_activity'], [])
+        self.assertEqual(entry['activity_cause'], {'cause': activity.NO_HOOKS,
+            'message': activity.diagnose_claude_silence(self.root)[1]})
+        import contextlib
+        import io
+        from taskrunner import cli
+        out = io.StringIO()
+        with patch.dict(agents.REGISTRY, claude=agents.CommandAgent), contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(['doctor', wf.workflow_file]), 0)
+        self.assertIn('observed activity: none; the work tree has no .claude/settings.json', out.getvalue())
+
+    def test_check_workflow_survives_malformed_project_hook_settings(self):
+        wf = self.workflow(kind='claude')
+        os.makedirs(os.path.join(self.root, '.claude'), exist_ok=True)
+        with open(os.path.join(self.root, '.claude', 'settings.json'), 'w') as fh:
+            fh.write('{"hooks": ' + '[' * 10000 + ']' * 10000 + '}')
+        self.commit()
+        with patch.dict(agents.REGISTRY, claude=agents.CommandAgent):
+            report = qualification.check_workflow(wf)
+        entry = next(iter(report['profiles'].values()))
+        self.assertEqual(entry['activity_cause']['cause'], activity.INSPECTION_FAILED)
+        self.assertEqual(report['problems'], [])
 
 class Invalidation(EngineCase):
     def test_environment_failure_discards_cached_qualification(self):

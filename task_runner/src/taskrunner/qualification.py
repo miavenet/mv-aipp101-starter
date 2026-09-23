@@ -185,9 +185,13 @@ def qualify(name, metadata, directory, timeout_s=60, budget_usd=1):
     observed = sorted({str(row.get('event') or row.get('hook_event_name'))
                        for inv in Path(directory).glob('invocation-*')
                        for row in activity.read_events(inv / 'hooks', 1000)})
-    return {'capabilities': capabilities, 'probes': probes, 'spend': spend, 'metadata': metadata,
-            'observed_activity': observed,
-            'directory': directory, 'orphan_detection': 'strong' if platform.system() == 'Linux' else 'weaker (ps fallback)'}
+    result = {'capabilities': capabilities, 'probes': probes, 'spend': spend, 'metadata': metadata,
+              'observed_activity': observed,
+              'directory': directory, 'orphan_detection': 'strong' if platform.system() == 'Linux' else 'weaker (ps fallback)'}
+    if profile['kind'] == 'claude' and not observed:
+        cause, message = activity.diagnose_claude_silence(metadata['root'])
+        result['activity_cause'] = {'cause': cause, 'message': message}
+    return result
 
 
 def _read(path):

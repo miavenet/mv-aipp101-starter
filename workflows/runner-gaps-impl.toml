@@ -217,7 +217,7 @@ reviewers = [{ perspective = "principal-engineer", agent = "astra-review", model
 [[task]]
 id = "g2-t4"
 type = "implement"
-complexity = "standard"
+complexity = "high"
 title = "G2 task T4: Render rejected and repaired review answers"
 needs = ["g2-t2"]
 prompt = "Implement task T4 of the \"Implementation plan\" section of the accepted design task_runner/docs/design/runner-gaps/G2-keep-sound-reviews.md (G2), and nothing beyond it. Read the whole design first: the mechanism, state changes, exact messages and crash points it specifies are the contract, and the reviewer checks your change against it. Scenarios this task must make true, each with a test in the model-free suite named after its scenario row: RUN-18, RUN-20, FND-25 (STATUS line). Where a scenario is split across tasks, cover the half named here and leave the rest. Earlier tasks of the plan are already on the branch; build on them rather than re-doing them. Follow the surrounding code's style; no new dependencies; every existing test must still pass (a test the design says to rewrite is the only exception). If the design is wrong or cannot be implemented as written, say so in your answer as a blocker instead of silently departing from it. Scenario ids in this design were assigned before the G1 work landed and may collide with rows G1 added; identify tests by the scenario's test name from the design's table, not by its id. In your summary, list the scenarios covered with their test names."

@@ -606,6 +606,68 @@ gate=["test ! -f src/a"]
         self.assertNotIn('rejected_reviews', self.the_run().state['tasks']['make'])
         self.check_invariants()
 
+    def test_a_repair_is_recorded_where_it_can_be_audited(self):
+        """fnd: a repair is recorded where it can be audited (FND-25, event and verdict.json)"""
+        a, b = self.setup_panel()
+        by_title = review([finding()], resolutions=[dict(finding='Fix this', status='unresolved', note='n')])
+        fixed = dict(finding='make/PE-1', action='fixed', note='Fixed')
+        self.script({'make': [GOOD, {'write': {'src/a': 'better\n'}, 'answer': done(responses=[fixed])}],
+                     a: [{'answer': by_title}, {'answer': review(resolutions=[resolution()])}],
+                     b: [PASS, PASS]})
+        self.assertEqual(self.start(), 0, self.output)
+        ledger = self.ledger()
+        self.assertEqual([h['event'] for h in ledger['findings'][0]['history']],
+                         ['raised', 'repair', 'response', 'resolution'])
+        self.assertEqual(ledger['findings'][0]['history'][1],
+                         {'event': 'repair', 'round': 1, 'kind': 'dropped_resolutions', 'dropped': ['Fix this']})
+        repairs = [e for e in self.events() if e['event'] == 'review-repair']
+        self.assertEqual(len(repairs), 1)
+        self.assertEqual({k: repairs[0][k] for k in ('task', 'producer', 'round', 'kind', 'dropped')},
+                         {'task': a, 'producer': 'make', 'round': 1, 'kind': 'dropped_resolutions', 'dropped': 1})
+        result = self.read_json(a, 'round-1', 'verdict.json')['result']
+        self.assertEqual(result['repair'], {'kind': 'dropped_resolutions',
+                                            'dropped': [{'finding': 'Fix this', 'status': 'unresolved'}],
+                                            'why': 'the round required no resolutions and no entry named '
+                                                   'a finding in the ledger'})
+        self.assertEqual(result['answer']['resolutions'], by_title['resolutions'])
+        self.check_invariants()
+
+    def test_a_repair_survives_a_colliding_sibling_that_retries_once(self):
+        """fnd: a repair is recorded once, not once per pass (FND-25, retry-success)"""
+        a, b = self.setup_panel()
+        by_title = review([finding()], resolutions=[dict(finding='Fix this', status='unresolved', note='n')])
+        responses = [dict(finding='make/'+code+'-1', action='fixed', note='Fixed') for code in ('PE', 'SC')]
+        self.script({'make': [GOOD, {'write': {'src/a': 'better\n'}, 'answer': done(responses=responses)}],
+                     a: [{'answer': by_title}, {'answer': review(resolutions=[resolution()])}],
+                     b: [{'answer': self.COLLIDING},
+                         {'answer': review([finding()]), 'match': self.COLLISION},
+                         {'answer': review(resolutions=[resolution('make/SC-1')])}]})
+        self.assertEqual(self.start(), 0, self.output)  # PE's repair restarts nothing; SC's own retry does
+        self.assertEqual((self.count(a), self.count(b)), (2, 3))
+        ledger = self.ledger()
+        self.assertEqual([f['id'] for f in ledger['findings']], ['make/PE-1', 'make/SC-1'])
+        self.assertEqual([h['event'] for h in ledger['findings'][0]['history']],
+                         ['raised', 'repair', 'response', 'resolution'])
+        repairs = [e for e in self.events() if e['event'] == 'review-repair']
+        self.assertEqual(len(repairs), 1)
+        self.assertEqual(self.read_json(a, 'round-1', 'verdict.json')['result']['repair']['kind'],
+                         'dropped_resolutions')
+        self.check_invariants()
+
+    def test_a_repair_is_not_published_when_a_colliding_sibling_exhausts_its_tries(self):
+        """fnd: a repair is not published when a colliding sibling exhausts its tries (FND-25, retry-exhaustion)"""
+        a, b = self.setup_panel()
+        by_title = review([finding()], resolutions=[dict(finding='Fix this', status='unresolved', note='n')])
+        self.script({'make': [GOOD], a: [{'answer': by_title}], b: [{'answer': self.COLLIDING}] * 3})
+        self.assertEqual(self.start(), 255, self.output)
+        self.assertEqual((self.count(a), self.count(b)), (1, 3))
+        state = self.the_run().state['tasks']['make']
+        self.assertEqual(state['status'], 'blocked')
+        self.assertEqual(state.get('ledger', {}).get('findings', []), [])
+        self.assertEqual(len(state['rejected_reviews']), 3)
+        self.assertEqual([e for e in self.events() if e['event'] == 'review-repair'], [])
+        self.check_invariants()
+
     def test_a_repair_never_produces_a_pass_and_the_rejections_are_summarised(self):
         """fnd: a repair never produces a pass (FND-24, the owner's summary)"""
         a, b = self.setup_panel()

@@ -105,6 +105,11 @@ def apply_review(ledger, reviewer, answer, candidate, changes):
                   'dropped': [{'finding': _dropped_text(r['finding']), 'status': r['status']}
                               for r in answer['resolutions']],
                   'why': 'the round required no resolutions and no entry named a finding in the ledger'}
+        dropped_titles = [d['finding'] for d in repair['dropped']]
+        raised = result['findings'][len(result['findings']) - len(answer['findings']):]
+        for f in raised:
+            f['history'].append({'event': 'repair', 'round': f['history'][-1]['round'],
+                                 'kind': repair['kind'], 'dropped': dropped_titles})
         return result, verdict, repair
     result, verdict = _apply(ledger, reviewer, answer, candidate, changes)
     return result, verdict, None

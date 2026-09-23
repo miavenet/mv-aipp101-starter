@@ -70,8 +70,11 @@ class Findings(unittest.TestCase):
                                   'dropped': [{'finding': 'Fix this', 'status': 'unresolved'}],
                                   'why': 'the round required no resolutions and no entry named '
                                          'a finding in the ledger'})
-        # Exactly what the answer with resolutions [] would have produced, and nothing else moved.
-        self.assertEqual(result, f.apply_review(ledger, R, dict(answer, resolutions=[]), 'C1', {})[0])
+        # Exactly what the answer with resolutions [] would have produced, plus the repair's own
+        # audit trail (FND-25) on the finding it raised, and nothing else moved.
+        clean = copy.deepcopy(result)
+        clean['findings'][0]['history'].pop()
+        self.assertEqual(clean, f.apply_review(ledger, R, dict(answer, resolutions=[]), 'C1', {})[0])
         self.assertEqual((ledger, answer), (original, kept))
 
     def test_a_meaningless_resolution_is_redacted_and_bounded_in_the_repair_record(self):
@@ -86,6 +89,16 @@ class Findings(unittest.TestCase):
         self.assertIn(proc.REDACTED.decode(), text)
         self.assertEqual(len(text), 201)
         self.assertTrue(text.endswith('…'))
+
+    def test_a_repair_is_recorded_where_it_can_be_audited(self):
+        """fnd: a repair is recorded where it can be audited (FND-25, the ledger's half)"""
+        answer = review([finding()], resolutions=[dict(finding='Fix this', status='unresolved', note='n')])
+        result, verdict, repair = f.apply_review(f.empty('make'), R, answer, 'C1', {})
+        self.assertEqual(verdict, 'block')
+        self.assertEqual([x['event'] for x in result['findings'][0]['history']], ['raised', 'repair'])
+        self.assertEqual(result['findings'][0]['history'][1],
+                         {'event': 'repair', 'round': 1, 'kind': f.REPAIR_DROPPED_RESOLUTIONS,
+                          'dropped': ['Fix this']})
 
     def test_a_real_id_is_never_repaired_away(self):
         """fnd: a real id is never repaired away (FND-22). Today's diagnostic, and atomicity."""

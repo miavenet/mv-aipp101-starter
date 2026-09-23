@@ -169,18 +169,27 @@ class Panels:
             # workflow order, which collection could not see. A refusal discards the local ledger
             # and sends that answer back through the rejection transition; the rest are re-applied
             # to a fresh copy on the next pass, so no id is consumed twice.
-            ledger=self.ledger(tid); verdicts={}
+            ledger=self.ledger(tid); verdicts={}; repairs=[]
             for job in panel['jobs']:
                 if job['kind']!='review':
                     continue
                 try:
-                    ledger, verdicts[job['task']], _repair=findings.apply_review(
+                    ledger, verdicts[job['task']], repair=findings.apply_review(
                         ledger,self.tasks[job['task']],job['result']['answer'],candidate,job['changes'])
                 except findings.ProtocolError as exc:
                     self.reject_answer(job, tid, status=agents.PROTOCOL_ERROR, error=str(exc),
                                        structured=job['result']['answer'])
                     break
+                if repair:
+                    repairs.append((job, repair))
             else:
+                # The pass succeeded for every reviewer: only now is a repair real, so only now
+                # is it published. An earlier pass that this one superseded (a sibling's rejection
+                # restarted the loop) never got here, so it never recorded or announced anything.
+                for job, repair in repairs:
+                    job['result']['repair'] = repair
+                    self.run.event('review-repair', task=job['task'], producer=tid, round=job['round'],
+                                   kind=repair['kind'], dropped=len(repair['dropped']))
                 break
         for job in panel['jobs']:
             verdict=verdicts.get(job['task'])

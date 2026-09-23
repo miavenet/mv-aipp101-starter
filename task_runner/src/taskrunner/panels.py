@@ -193,8 +193,16 @@ class Panels:
                 job['result'] = {'status': 'ok', 'answer': outcome.structured, 'verdict': verdict}
         if outcome.status == agents.PROTOCOL_ERROR:
             job['protocol_error'] = outcome.error
+        # A provider failure or a time-out is not the reviewer's answer: call again within the
+        # same three tries, and from the second one on a fallback profile when the task has one.
+        provider_failed = outcome.status in (agents.TRANSIENT, agents.TIMED_OUT)
+        if provider_failed and job['tries'] < 3:
+            job['provider_failures'] = job.get('provider_failures', 0) + 1
+            if job['provider_failures'] >= 2:
+                self.step_to_fallback(self.tasks[job['task']],
+                                      f"provider failed twice on this review: {outcome.error[:200]}")
         if outcome.status != agents.OK:
-            if outcome.status != agents.PROTOCOL_ERROR or job['tries'] >= 3:
+            if (outcome.status != agents.PROTOCOL_ERROR and not provider_failed) or job['tries'] >= 3:
                 job['result'] = {'status': outcome.status, 'error': outcome.error}
         self.run.event('review-call', task=job['task'], status=outcome.status,
                        round=job['round'], error=outcome.error)

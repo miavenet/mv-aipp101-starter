@@ -158,6 +158,15 @@ Rows marked **(B*n*)** were added or changed after the
 | RUN-16 | a finished run's directory is deleted with `rm -rf` **(B8)** | it succeeds: no directory in the record is made read-only | `run: a run can be deleted` |
 | RUN-17 | `prune` is run with one `done` run, one deleted run directory and one unfinished run **(B6)** | the refs of the first two are deleted and the third's are kept | `run: prune` |
 
+### Provider failures (PROV)
+
+| ID | WHEN | THEN | Test |
+|---|---|---|---|
+| PROV-11 | a review call fails at the provider (capacity, overload, a dropped connection: the `transient` outcome), and the reviewer has a qualified `fallback_agents` entry | the call is made again within the reviewer's three tries; from the second failure on it goes to the fallback; the answer that arrives is the panel's answer and the producer is not blocked | `prov: reviewer transient failure` |
+| PROV-12 | a review call runs past its time limit | same as PROV-11: a time-out is not the reviewer's answer | `prov: reviewer timeout` |
+| PROV-13 | a producer call fails at the provider | the call is made again within the protocol-retry budget without spending an attempt, on the fallback from the second failure; if every try fails the run stops with "the provider kept failing", no attempt used, and `resume` tries again | `prov: producer transient failure` |
+| PROV-14 | an agent reports that the API cannot be reached (DNS, no network) | environment failure: the run stops with the cause and no attempt is used; `resume` when the network is back | `prov: unreachable API is an environment failure` |
+
 ### Pausing (PAUSE)
 
 | ID | WHEN | THEN | Test |

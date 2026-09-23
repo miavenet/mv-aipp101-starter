@@ -1,5 +1,6 @@
 """Provider routing scenarios: deterministic, no paid model calls."""
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -199,6 +200,106 @@ fallback_agents=["backup"]
         report = json.loads(Path(self.the_run().path, 'qualification.json').read_text())
         self.assertTrue(all(e['metadata']['model'] == 'complex-model' for e in report['profiles'].values()))
 
+    def failure_patch(self, status, error, predicate):
+        """Make the fake agent's answer a provider failure of `status` whenever `predicate` says."""
+        original = agents.CommandAgent.run
+        calls = []
+        def run(agent, prompt, **kwargs):
+            answer = original(agent, prompt, **kwargs)
+            if kwargs['env'].get('TASK_RUNNER_RUN') != 'doctor':
+                calls.append((agent.name, kwargs['read_only']))
+                if predicate(agent, prompt, kwargs, calls):
+                    answer.status, answer.error, answer.structured = status, error, None
+            return answer
+        self.addCleanup(patch.stopall)
+        patch.object(agents.CommandAgent, 'run', run).start()
+        return calls
+
+    def review_events(self):
+        with open(os.path.join(self.the_run().path, 'events.jsonl'), encoding='utf-8') as fh:
+            events = [json.loads(line) for line in fh if line.strip()]
+        return [e['status'] for e in events if e['event'] == 'review-call']
+
+    REVIEWED = ONE.replace('fallback_agents=["backup"]', '') + '''
+[[task]]
+id="reviewer"
+type="code-review"
+perspective="principal-engineer"
+reviews="make"
+fallback_agents=["backup"]
+'''
+
+    def test_reviewer_transient_failure_is_retried_then_falls_back(self):
+        """prov: a reviewer call that fails at the provider (PROV-11): retried, then the fallback"""
+        self.workflow(self.REVIEWED)
+        self.script({'make': [{'write': {'src/a': 'ok'}, 'answer': done()}],
+                     'reviewer': [{'answer': review()}] * 3})
+        calls = self.failure_patch(agents.TRANSIENT, 'Selected model is at capacity',
+                                   lambda a, p, kw, c: kw['read_only'] and a.name == 'fake')
+        self.assertEqual(self.start(), 0, self.output)
+        self.assertEqual([c[0] for c in calls], ['fake', 'fake', 'fake', 'backup'])
+        self.assertEqual(self.status('make'), 'accepted')
+        self.assertEqual(self.status('reviewer'), 'accepted')
+        self.assertEqual(self.review_events(), ['transient', 'transient', 'ok'])
+        self.check_invariants()
+
+    def test_reviewer_timeout_is_retried_like_a_provider_failure(self):
+        """prov: a reviewer call that runs past its time limit (PROV-12) is not the panel's answer"""
+        self.workflow(self.REVIEWED.replace('fallback_agents=["backup"]\n', ''))
+        self.script({'make': [{'write': {'src/a': 'ok'}, 'answer': done()}],
+                     'reviewer': [{'answer': review()}] * 3})
+        calls = self.failure_patch(agents.TIMED_OUT, 'the call ran past its time limit',
+                                   lambda a, p, kw, c: kw['read_only'] and len(c) == 2)
+        self.assertEqual(self.start(), 0, self.output)
+        self.assertEqual([c[0] for c in calls], ['fake', 'fake', 'fake'])
+        self.assertEqual(self.status('reviewer'), 'accepted')
+        self.check_invariants()
+
+    def test_reviewer_failing_three_times_still_blocks(self):
+        self.workflow(self.REVIEWED.replace('fallback_agents=["backup"]\n', ''))
+        self.script({'make': [{'write': {'src/a': 'ok'}, 'answer': done()}],
+                     'reviewer': [{'answer': review()}] * 3})
+        self.failure_patch(agents.TRANSIENT, 'overloaded', lambda a, p, kw, c: kw['read_only'])
+        self.assertEqual(self.start(), 255, self.output)
+        self.assertEqual(self.status('make'), 'blocked')
+        self.assertIn('review panel could not produce valid answers', self.output)
+
+    def test_producer_transient_failure_uses_no_attempt(self):
+        """prov: a producer call that fails at the provider (PROV-13): retried without an attempt"""
+        self.workflow(ONE)
+        self.script([{'write': {'src/a': 'ok'}, 'answer': done()}] * 3)
+        calls = self.failure_patch(agents.TRANSIENT, 'API Error: 529 overloaded_error',
+                                   lambda a, p, kw, c: a.name == 'fake')
+        self.assertEqual(self.start(), 0, self.output)
+        self.assertEqual([c[0] for c in calls], ['fake', 'fake', 'backup'])
+        st = self.the_run().state['tasks']['make']
+        self.assertEqual(st['attempts_used'], 1)
+        self.assertEqual(st['status'], 'accepted')
+        self.check_invariants()
+
+    def test_producer_transient_failure_without_fallback_stops_the_run(self):
+        self.workflow(ONE.replace('fallback_agents=["backup"]\n', ''))
+        self.script([{'write': {'src/a': 'ok'}, 'answer': done()}] * 3)
+        self.failure_patch(agents.TRANSIENT, 'at capacity', lambda a, p, kw, c: True)
+        self.assertEqual(self.start(), 2, self.output)
+        self.assertIn('the provider kept failing', self.output)
+        self.assertIn('No attempt was used', self.output)
+        self.assertEqual(self.the_run().state['tasks']['make']['attempts_used'], 0)
+        self.assertEqual(self.resume(), 2)                       # still failing: still no attempt
+        self.assertEqual(self.the_run().state['tasks']['make']['attempts_used'], 0)
+
+    def test_transient_and_unreachable_classification(self):
+        codex = agents.make('codex', {'kind': 'codex'})
+        r = codex.interpret(result(b'{"type":"turn.failed","error":{"message":"Selected model is at capacity. Please try a different model."}}', code=1))
+        self.assertEqual(r.status, agents.TRANSIENT)
+        claude = agents.make('claude', {'kind': 'claude'})
+        envelope = {'type': 'result', 'subtype': 'success', 'is_error': True, 'usage': {},
+                    'result': "API Error: Can't reach the API server \u2014 check your internet or DNS (ENOTFOUND)"}
+        self.assertEqual(claude.interpret(result(json.dumps(envelope).encode(), code=1)).status, agents.ENVIRONMENT)
+        envelope['result'] = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error"}}'
+        self.assertEqual(claude.interpret(result(json.dumps(envelope).encode(), code=1)).status, agents.TRANSIENT)
+        self.assertFalse(agents.transient_error('the test suite failed: connection handling is wrong'))
+
 
 class ModelPolicy(RepoCase):
     def config(self, extra='', primary='codex', profile='kind="claude"\nmodel="fable"'):
@@ -226,7 +327,6 @@ claude="sonnet"
         self.assertError(self.config('complexity="magic"'), 'complexity')
         self.assertError(self.config(primary='backup'), 'unique')
         self.assertError(self.config(profile='kind="claude"\nmodel="fable"\npermission_mode="bypassPermissions"'), 'widen')
-
 
 class QuotaClassification(RepoCase):
     def test_codex_error_channel_only(self):

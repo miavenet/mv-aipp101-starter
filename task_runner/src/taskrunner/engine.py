@@ -455,6 +455,21 @@ class Engine(ProviderRouting, Panels):
                     task, self.template(task), brief=self.brief(task), inputs=self.inputs(task),
                     feedback=feedback, attempt=st['attempts_used'] + 1, frozen=self.frozen(tid), caps=caps)
                 continue
+            if result.status == agents.TRANSIENT:
+                # The provider failed, not the author: another call, on a fallback profile from
+                # the second failure on, within the protocol-retry budget and without an attempt.
+                st["provider_failures"] = st.get("provider_failures", 0) + 1
+                st["session_id"] = None
+                continuing = False
+                if st["provider_failures"] >= 2 and self.step_to_fallback(
+                        task, f"provider failed twice: {result.error[:200]}"):
+                    selected = self.provider_task(task)
+                    agent = agents.make(selected['agent'], self.wf['agents'][selected['agent']])
+                prompt = prompts.produce_prompt(
+                    task, self.template(task), brief=self.brief(task), inputs=self.inputs(task),
+                    feedback=feedback, attempt=st['attempts_used'] + 1, frozen=self.frozen(tid), caps=caps)
+                self.run.save()
+                continue
             if result.status == agents.OK:
                 try:
                     responded = findings.respond(self.ledger(tid), result.structured, n)
@@ -484,6 +499,12 @@ class Engine(ProviderRouting, Panels):
             qualification.invalidate(self.run, tid)
             raise EngineStop(f"environment failure in task '{tid}': {result.error}. No attempt "
                              "was used. Fix the cause, then `runner resume`")
+        if result.status == agents.TRANSIENT:
+            st["pending_protocol_tries"] = max(0, st.get("pending_protocol_tries", 0) - 1)
+            st.pop("provider_failures", None)
+            raise EngineStop(f"the provider kept failing on task '{tid}': {result.error}. No attempt "
+                             "was used. Wait, or replan its profile, then `runner resume`")
+        st.pop("provider_failures", None)
 
         st.pop("pending_attempt", None)
         st.pop("pending_protocol_tries", None)

@@ -2,7 +2,9 @@
 
 The runner selects a qualified agent profile for each producer or reviewer. An explicit
 `fallback_agents` list authorizes automatic switching when the current provider reports
-quota exhaustion. This layer sits above the native adapters; task contracts, reviews,
+quota exhaustion, or fails twice in a row on the same call for a transient reason (capacity,
+overload, a dropped connection, or, for a review, a time-out). A provider failure never counts
+as a producer attempt or as a reviewer's answer. This layer sits above the native adapters; task contracts, reviews,
 acceptance, budgets and checkpoints remain owned by the runner.
 
 ## Complexity levels

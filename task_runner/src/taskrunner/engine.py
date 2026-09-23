@@ -128,6 +128,9 @@ class Engine(ProviderRouting, Panels):
         finally:
             stop.set()
             thread.join(timeout=5)
+            # Whatever ended the loop, an interrupt included, the page shows the state as it is:
+            # the operations left without an outcome, and that `resume` reconciles them.
+            self.run.refresh_status()
 
     def _execute(self):
         """Run until nothing can start. Returns the exit code."""

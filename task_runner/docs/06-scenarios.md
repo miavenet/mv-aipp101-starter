@@ -209,7 +209,7 @@ workflow runs.
 | ID | WHEN | THEN | Test |
 |---|---|---|---|
 | PAUSE-01 | `runner pause RUN` while a runner works on RUN | the runner finishes what is in flight and stops before its next agent call, command or review batch: the state is `stopped` with a reason beginning "paused", no intent is left to reconcile, the request file is cleared, and `resume` continues without repeating a call | `pause: at a safe point` |
-| PAUSE-02 | `runner pause RUN --now` while an agent call is in flight | the process named in the run lock (not any process by name) gets SIGTERM, stops its children and exits; the lock is released; the call in flight is lost, and `resume` reconciles it and runs the attempt again | `pause: --now` |
+| PAUSE-02 | `runner pause RUN --now` while an agent call is in flight | the process named in the run lock (not any process by name) gets SIGTERM, stops its children and exits; the lock is released; STATUS.md is refreshed at the interrupt, so it lists the interrupted operation and the `resume` that reconciles it; the call in flight is lost, and `resume` reconciles it, runs the attempt again, and the line is gone | `pause: --now` |
 | PAUSE-03 | `runner pause RUN` when no live runner holds RUN | nothing happens and the command says so; a stale request file is removed | `pause: no runner` |
 
 ## Git (GIT)

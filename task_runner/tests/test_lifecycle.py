@@ -2316,7 +2316,12 @@ gate = ["grep -q good src/b.txt"]
         self.assertEqual(runner.returncode, 2, err)
         self.assertIn("interrupted; child processes stopped", err)
         self.assertIsNone(lock.holder())                           # released
+        status_md = os.path.join(self.the_run().path, "STATUS.md")
+        with open(status_md, encoding="utf-8") as fh:
+            self.assertIn("1 operation(s) were interrupted", fh.read())   # the lost call, until reconciled
         self.assertEqual(self.resume(), 0)                         # reconciles the lost call, runs again
+        with open(status_md, encoding="utf-8") as fh:
+            self.assertNotIn("were interrupted", fh.read())        # and the page says so at once
         self.assertEqual(self.status("make"), "accepted")
         self.assertEqual(self.calls(), 2)
         self.check_invariants()

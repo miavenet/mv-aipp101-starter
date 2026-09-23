@@ -173,21 +173,36 @@ def claim_invocation(path):
         raise InvocationError("this invocation directory has already been used") from exc
 
 
-# Match failures of the execution/authentication machinery, not ordinary failing tests.
-ENVIRONMENT_MARKERS = (
+# Match failures of the execution/authentication machinery, not ordinary failing tests. Each
+# marker matches as whole words, so `ENOTFOUND` is not seen inside `FileNotFoundError`.
+STARTUP_MARKERS = (
     "bwrap: no permissions to create a new namespace", "sandbox failed to start",
     "failed to create sandbox", "unprivileged user namespaces are unavailable",
+)
+PROVIDER_MARKERS = (
     "invalid api key", "invalid_api_key", "authentication failed", "not logged in",
     "can't reach the api server", "can’t reach the api server", "enotfound", "network is unreachable",
     "unexpected argument", "unknown option", "invalid value for", "please run /login", "please run codex login", "error loading config", "invalid configuration",
 )
+ENVIRONMENT_MARKERS = STARTUP_MARKERS + PROVIDER_MARKERS
 
 
-def environment_error(text):
+def _marker_pattern(markers):
+    return re.compile("|".join(r"(?<![\w])" + re.escape(m) + r"(?![\w])" for m in markers), re.IGNORECASE)
+
+
+_ALL_MARKERS = _marker_pattern(ENVIRONMENT_MARKERS)
+_STARTUP_ONLY = _marker_pattern(STARTUP_MARKERS)
+
+
+def environment_error(text, startup_only=False):
+    """The first line of `text` naming an environment failure. Text an agent's own tool commands
+    printed is checked for startup failures only: source code or documentation that mentions
+    "not logged in" is not evidence that the agent is."""
     if not isinstance(text, str):
         return ""
-    return next((line[:2000] for line in text.splitlines()
-                 if any(marker in line.lower() for marker in ENVIRONMENT_MARKERS)), "")
+    pattern = _STARTUP_ONLY if startup_only else _ALL_MARKERS
+    return next((line[:2000] for line in text.splitlines() if pattern.search(line)), "")
 
 
 def process_failure(res):
@@ -276,7 +291,8 @@ class CodexEvents:
                         self.text = ""
                         self.malformed = True
                 elif item.get("type") == "command_execution" and item.get("exit_code") not in (None, 0):
-                    self.environment = environment_error(item.get("aggregated_output", "")) or self.environment
+                    self.environment = (environment_error(item.get("aggregated_output", ""), startup_only=True)
+                                        or self.environment)
 
     def result(self, res):
         failure = process_failure(res)

@@ -167,6 +167,7 @@ Rows marked **(B*n*)** were added or changed after the
 | PROV-12 | a review call runs past its time limit | same as PROV-11: a time-out is not the reviewer's answer | `prov: reviewer timeout` |
 | PROV-13 | a producer call fails at the provider | the call is made again within the protocol-retry budget without spending an attempt, on the fallback from the second failure; if every try fails the run stops with "the provider kept failing", no attempt used, and `resume` tries again | `prov: producer transient failure` |
 | PROV-14 | an agent reports that the API cannot be reached (DNS, no network) | environment failure: the run stops with the cause and no attempt is used; `resume` when the network is back | `prov: unreachable API is an environment failure` |
+| PROV-15 | a reviewer's failed tool command prints text that mentions an environment marker (source code with `FileNotFoundError`, documentation saying "not logged in") | not an environment failure: markers match whole words, and an agent's own tool output is checked only for sandbox startup failures; provider failures count only on the error channel | `prov: tool output is not the provider error channel` |
 
 ### Pausing (PAUSE)
 

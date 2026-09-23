@@ -163,5 +163,27 @@ class Headless(unittest.TestCase):
         r = self.call_script(stream)
         self.assertEqual(r.status, agents.ENVIRONMENT)
 
+    def test_tool_output_is_not_the_provider_error_channel(self):
+        """A reviewer's failed `rg` printing source code is not an environment failure (PROV-15)."""
+        review = json.dumps({"verdict": "pass", "findings": [], "resolutions": [], "summary": "fine"})
+        events = [
+            {"type": "thread.started", "thread_id": "t1"},
+            {"type": "turn.started"},
+            {"type": "item.completed", "item": {"id": "i1", "type": "command_execution", "exit_code": 1,
+             "command": "sed -n 1,5p x.py; rg missing", "aggregated_output":
+             "        except FileNotFoundError:\n            pass\n# docs: say 'not logged in' here\n"}},
+            {"type": "item.completed", "item": {"id": "i2", "type": "agent_message", "text": review}},
+            {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 5}},
+        ]
+        a = agents.make("codex", {"kind": "codex"})
+        r = a.interpret(result("\n".join(json.dumps(e) for e in events).encode()))
+        self.assertEqual(r.status, agents.OK, r.error)
+        # Startup failures in a failed command's output still count; provider ones do on the error channel.
+        events[2]["item"]["aggregated_output"] = "bwrap: no permissions to create a new namespace\n"
+        r = a.interpret(result("\n".join(json.dumps(e) for e in events).encode()))
+        self.assertEqual(r.status, agents.ENVIRONMENT)
+        self.assertEqual(agents.environment_error("FileNotFoundError: x"), "")
+        self.assertTrue(agents.environment_error("getaddrinfo ENOTFOUND api.anthropic.com"))
+
 if __name__ == "__main__":
     unittest.main()

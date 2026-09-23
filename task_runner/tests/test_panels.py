@@ -432,6 +432,130 @@ gate=["test ! -f src/a"]
             self.assertEqual(fh.read(), before)
         self.check_invariants()
 
+    def fail_on(self, rid, status, error, calls):
+        """The listed calls of reviewer `rid` end with `status` and no answer at all, as the
+        adapter reports a call that ran past its time limit or died."""
+        from unittest import mock
+        from taskrunner import agents
+        original, seen = agents.CommandAgent.run, []
+        def run(agent, prompt, **kwargs):
+            answer = original(agent, prompt, **kwargs)
+            if kwargs['env'].get('TASK_RUNNER_TASK') == rid:
+                seen.append(rid)
+                if len(seen) in calls:
+                    answer.status, answer.error, answer.structured = status, error, None
+            return answer
+        patcher = mock.patch.object(agents.CommandAgent, 'run', run)
+        patcher.start(); self.addCleanup(patcher.stop)
+
+    def both_status_files(self):
+        run = self.the_run()
+        with open(os.path.join(run.path, 'STATUS.md')) as fh:
+            run_status = fh.read()
+        with open(self.task_file('make', 'STATUS.md')) as fh:
+            return run, run_status, fh.read()
+
+    def test_a_protocol_block_is_not_a_substantive_block(self):
+        """run: a protocol block is not a substantive block (RUN-19)"""
+        a, b = self.setup_panel()
+        self.script({'make': [GOOD], a: [{'raw_answer': 'prose'}] * 3, b: [PASS]})
+        self.assertEqual(self.start(), 255, self.output)
+        self.assertIn('make: blocked (the reviewers could not answer in the required form). '
+                      'Its work is in failed.patch', self.output)
+        run, status, task_status = self.both_status_files()
+        t = run.state['tasks']['make']
+        self.assertEqual((t['status'], t['block_kind']), ('blocked', 'protocol'))
+        self.assertEqual([(r['reviewer'], r['status'], r['tries']) for r in t['block_reviewers']],
+                         [(a, 'protocol-error', 3)])
+        self.assertIn('| make | implement | blocked (protocol) |', status)
+        self.assertIn('- **make** is blocked: the reviewers could not answer in the required '
+                      'form. 3 review answers were rejected and none was applied; they are '
+                      f"summarised in tasks/{t['dir']}/STATUS.md.", status)
+        self.assertIn('    # make: the reviewers could not answer in the required form.\n'
+                      f"    # Read the rejected answers in tasks/{t['dir']}/STATUS.md first.\n"
+                      f'    runner retry {run.name} make --apply-patch\n', status)
+        self.assertIn('# make — blocked: the reviewers could not answer in the required form\n',
+                      task_status)
+        self.assertIn('This is a protocol failure of the panel, not a judgement of the work. No '
+                      'finding from these rounds reached the ledger.', task_status)
+        self.assertIn(f'Why each reviewer did not finish:\n- {a}: could not answer in the '
+                      'required form (3 tries).\n', task_status)
+        self.check_invariants()
+
+    def test_a_protocol_block_with_no_set_aside_work_offers_a_plain_retry(self):
+        """run: a protocol block is not a substantive block (RUN-19, nothing to put back)
+
+        A producer whose declared outputs already exist can finish an attempt without changing a
+        file. Its set-aside record holds `paths: []`, and `retry --apply-patch` refuses such a
+        task, so "Next" must name the command that works."""
+        self.write('src/a', 'good\n')
+        a, b = self.setup_panel()
+        self.script({'make': [{'answer': done()}], a: [{'raw_answer': 'prose'}] * 3, b: [PASS]})
+        self.assertEqual(self.start(), 255, self.output)
+        run, status, _task_status = self.both_status_files()
+        t = run.state['tasks']['make']
+        self.assertEqual((t['status'], t['block_kind']), ('blocked', 'protocol'))
+        self.assertEqual(self.read_json('make', 'set-aside.json')['paths'], [])
+        self.assertIn('    # make: the reviewers could not answer in the required form.\n'
+                      f"    # Read the rejected answers in tasks/{t['dir']}/STATUS.md first.\n"
+                      f'    runner retry {run.name} make\n', status)
+        self.assertNotIn('--apply-patch', status)
+        # The advertised command is the one the runner accepts.
+        self.assertEqual(self.runner('retry', 'latest', 'make', '-C', self.root), 0, self.output)
+        self.check_invariants()
+
+    def test_a_timeout_is_not_a_malformed_answer(self):
+        """run: a timeout is not a malformed answer (RUN-24, the mixed panel)"""
+        from taskrunner import agents
+        a, b = self.setup_panel()
+        self.script({'make': [GOOD], a: [{'raw_answer': 'prose'}] * 3, b: [PASS]})
+        self.fail_on(b, agents.TIMED_OUT, 'no terminal result in time', {1})
+        self.assertEqual(self.start(), 255, self.output)
+        # The console keeps the whole reason: no reviewer is given another's explanation.
+        self.assertIn('make: blocked (review panel could not produce valid answers:', self.output)
+        run, status, task_status = self.both_status_files()
+        t = run.state['tasks']['make']
+        self.assertEqual((t['status'], t['block_kind']), ('blocked', 'mixed'))
+        self.assertEqual([(r['reviewer'], r['status']) for r in t['block_reviewers']],
+                         [(a, 'protocol-error'), (b, 'timed-out')])
+        self.assertIn('| make | implement | blocked (protocol, in part) |', status)
+        self.assertIn('- **make** is blocked: one reviewer could not answer in the required form '
+                      f'and another did not finish. Per reviewer: {a}: could not answer in the '
+                      f'required form; {b}: ran past its time limit. The rejected answers are '
+                      f"summarised in tasks/{t['dir']}/STATUS.md.", status)
+        self.assertIn('    # make: one reviewer could not answer in the required form; another '
+                      'did not finish.\n'
+                      f"    # Read the rejected answers in tasks/{t['dir']}/STATUS.md first.\n"
+                      f'    runner retry {run.name} make --apply-patch\n', status)
+        self.assertIn('# make — blocked: the panel did not finish (one reviewer could not answer '
+                      'in the required form)\n', task_status)
+        self.assertNotIn('This is a protocol failure of the panel', task_status)
+        self.assertIn(f'Why each reviewer did not finish:\n- {a}: could not answer in the '
+                      f'required form (3 tries).\n- {b}: ran past its time limit.\n', task_status)
+        self.check_invariants()
+
+    def test_a_panel_broken_only_by_a_timeout_is_not_classified(self):
+        """run: a timeout is not a malformed answer (RUN-24, the timed-out panel)"""
+        from taskrunner import agents
+        a, b = self.setup_panel()
+        self.script({'make': [GOOD], a: [PASS], b: [PASS]})
+        self.fail_on(b, agents.TIMED_OUT, 'no terminal result in time', {1})
+        self.assertEqual(self.start(), 255, self.output)
+        run, status, task_status = self.both_status_files()
+        t = run.state['tasks']['make']
+        self.assertEqual(t['status'], 'blocked')
+        self.assertNotIn('block_kind', t)
+        self.assertNotIn('block_reviewers', t)
+        self.assertIn('| make | implement | blocked |', status)
+        self.assertIn('- **make** is blocked: review panel could not produce valid answers: '
+                      f"{b}: no terminal result in time. See tasks/{t['dir']}/STATUS.md.", status)
+        self.assertIn(f'    runner retry {run.name} make [--apply-patch]\n', status)
+        self.assertIn('# make — blocked\n', task_status)
+        for text in (status, task_status):
+            self.assertNotIn('required form', text)
+            self.assertNotIn('Why each reviewer did not finish', text)
+        self.check_invariants()
+
     def review_job(self, run, rid):
         return next(j for j in run.state['tasks']['make']['panel']['jobs'] if j['task'] == rid)
 

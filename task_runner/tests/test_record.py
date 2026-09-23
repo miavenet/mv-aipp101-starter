@@ -655,6 +655,58 @@ class DecisionPublication(RunCase):
         self.assertEqual(run.state["intents"], [])
 
 
+class BlockedProducerStatus(RunCase):
+    """A blocked producer reads as it always did unless its panel failed at the protocol level
+    (G2, task 5). `block_kind` is absent in every state written before it existed, and it
+    describes a `blocked` task only, so nothing else on the page moves."""
+
+    def rendered(self, **extra):
+        t = self.run_.state["tasks"]["implement"]
+        t.update(reason="3 attempts used and the last was sent back by a person or a reviewer",
+                 **extra)
+        self.run_.save()
+        self.run_.regenerate()
+        with open(os.path.join(self.run_.path, "STATUS.md")) as fh:
+            run_text = fh.read()
+        with open(os.path.join(self.run_.task_dir("implement"), "STATUS.md")) as fh:
+            return run_text, fh.read()
+
+    def test_a_blocked_producer_without_a_block_kind_renders_as_today(self):
+        """run: a protocol block is not a substantive block (RUN-19, the unchanged half)
+
+        A producer blocked with a finding open, in a state that has no `block_kind` at all."""
+        self.run_.state["tasks"]["implement"]["ledger"] = {
+            "task": "implement", "reviewers": {}, "next_ids": {"PE": 2},
+            "findings": [{"id": "implement/PE-1", "reviewer": "implement.review.principal-engineer",
+                          "severity": "blocking", "status": "open", "round": 1,
+                          "title": "the queue drops the last element", "history": []}]}
+        run_text, task_text = self.rendered(status="blocked")
+        self.assertIn("| implement | implement | blocked |", run_text)
+        self.assertIn("- **implement/PE-1** [open]: the queue drops the last element", run_text)
+        self.assertIn("- **implement** is blocked: 3 attempts used and the last was sent back by "
+                      "a person or a reviewer. See tasks/020-implement/STATUS.md.", run_text)
+        self.assertIn(f"    runner retry {self.run_.name} implement [--apply-patch]", run_text)
+        self.assertIn("# implement — blocked\n", task_text)
+        for text in (run_text, task_text):
+            self.assertNotIn("required form", text)
+            self.assertNotIn("Why each reviewer did not finish", text)
+
+    def test_a_block_kind_left_by_an_earlier_end_does_not_label_a_later_status(self):
+        """run: a protocol block is not a substantive block (RUN-19, a label outlives nothing)
+
+        `replan` resets an affected producer to `pending` without touching the fields of the end
+        it undoes, so the label is read only while the task is still blocked."""
+        run_text, task_text = self.rendered(
+            status="pending", block_kind="protocol",
+            block_reviewers=[{"reviewer": "implement.review.principal-engineer",
+                              "status": "protocol-error", "tries": 3}])
+        self.assertIn("| implement | implement | pending |", run_text)
+        self.assertIn("# implement — pending\n", task_text)
+        for text in (run_text, task_text):
+            self.assertNotIn("required form", text)
+            self.assertNotIn("Why each reviewer did not finish", text)
+
+
 class SetAsideStatus(RunCase):
     """STATUS.md tells the way back to set-aside work (G1, task 10)."""
 

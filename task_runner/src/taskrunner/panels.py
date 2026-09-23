@@ -163,8 +163,23 @@ class Panels:
                     self.st(j['task']).update(status='objected' if j in broken or
                         j['result'].get('verdict') == 'block' else 'accepted',reason='')
                 self.close_panel(panel, void=True)
+                # Classified from what the reviewers actually did, never from this call site: a
+                # first-call timeout is finalised without a retry and lands here too, and must
+                # keep its own explanation rather than be told it answered in the wrong form.
+                kinds = {j['result']['status'] for j in broken}
+                block_kind = ('protocol' if kinds == {agents.PROTOCOL_ERROR}
+                              else 'mixed' if agents.PROTOCOL_ERROR in kinds else None)
+                if block_kind:
+                    # Each reviewer's own cause travels with the classification, so the rendering
+                    # stays a pure function of the state (RUN-08) and never speaks for a reviewer
+                    # the classification does not describe.
+                    st['block_reviewers'] = [{'reviewer': j['task'], 'status': j['result']['status'],
+                                              'tries': j.get('tries', 0)} for j in broken]
+                else:
+                    st.pop('block_reviewers', None)
                 return self.end(task,'blocked','review panel could not produce valid answers: '+
-                                '; '.join(j['task']+': '+j['result']['error'] for j in broken))
+                                '; '.join(j['task']+': '+j['result']['error'] for j in broken),
+                                block_kind=block_kind)
             # Final application decides: each reviewer meets the ledger as it stands at its turn in
             # workflow order, which collection could not see. A refusal discards the local ledger
             # and sends that answer back through the rejection transition; the rest are re-applied

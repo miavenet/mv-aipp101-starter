@@ -975,6 +975,57 @@ def _has_set_aside(run_path, t):
     return bool(rec and rec["paths"])
 
 
+PROTOCOL_BLOCK = "the reviewers could not answer in the required form"
+MIXED_BLOCK = "one reviewer could not answer in the required form and another did not finish"
+REVIEWER_CAUSE = {"protocol-error": "could not answer in the required form",
+                  "timed-out": "ran past its time limit",
+                  "agent-error": "ended with an error",
+                  "interrupted": "was interrupted"}
+
+
+def _block_kind(t):
+    """How a producer's panel failed — "protocol", "mixed", or None. Read defensively: the field
+    is absent in every state written before it existed, and it describes a `blocked` task only,
+    so a retry or a replan that moves the task on cannot leave a stale label on the page."""
+    return t.get("block_kind") if t["status"] == "blocked" else None
+
+
+def _cause(r):
+    """One broken reviewer's cause in its own words, never the panel's classification."""
+    return REVIEWER_CAUSE.get(r["status"], r["status"])
+
+
+def _reviewer_causes(t):
+    """The list requirement 3 asks for, rendered whichever way the panel failed, so the accurate
+    cause per reviewer is always on the page. The retry budget is named only where it means
+    something: a timed-out call is finalised on its first try, without any retry."""
+    lines = []
+    for r in t.get("block_reviewers") or []:
+        tries = r["tries"]
+        spent = f" ({tries} tr{'y' if tries == 1 else 'ies'})" if r["status"] == "protocol-error" else ""
+        lines.append(f"- {r['reviewer']}: {_cause(r)}{spent}.")
+    return lines
+
+
+def _panel_attention(task_id, t, kind):
+    """The "Needs attention" line of a producer its panel could not judge. It says nobody judged
+    the work, and sends the owner to the summaries rather than to a parser diagnostic."""
+    where = f"tasks/{t['dir']}/STATUS.md"
+    if kind == "protocol":
+        n = len(t.get("rejected_reviews") or [])
+        if n == 0:
+            rejected = f"No answer could be read; see {where}."
+        elif n == 1:
+            rejected = f"1 review answer was rejected and it was not applied; it is summarised in {where}."
+        else:
+            rejected = (f"{n} review answers were rejected and none was applied; they are "
+                        f"summarised in {where}.")
+        return f"- **{task_id}** is blocked: {PROTOCOL_BLOCK}. {rejected}"
+    per = "; ".join(f"{r['reviewer']}: {_cause(r)}" for r in t.get("block_reviewers") or [])
+    return (f"- **{task_id}** is blocked: {MIXED_BLOCK}. Per reviewer: {per}. "
+            f"The rejected answers are summarised in {where}.")
+
+
 def render_run_status(info, state, disposition=None, now=None, run_path=None):
     spend = state["spend"]
     unpriced = spend["unpriced"]
@@ -992,6 +1043,9 @@ def render_run_status(info, state, disposition=None, now=None, run_path=None):
     for task_id in state["order"]:
         t = state["tasks"][task_id]
         status = t["status"] + (f" ({t['reason']})" if t["reason"] and t["status"] == "skipped" else "")
+        kind = _block_kind(t)
+        if kind:
+            status = "blocked (protocol)" if kind == "protocol" else "blocked (protocol, in part)"
         if t.get("stale"):
             status += " (stale)"
             attention += [f"- **{task_id}** was accepted on an older version of {s['file']} "
@@ -1005,7 +1059,8 @@ def render_run_status(info, state, disposition=None, now=None, run_path=None):
             if finding["severity"] == "blocking" and finding["status"] in ("open", "disputed", "escalated"):
                 attention.append(f"- **{finding['id']}** [{finding['status']}]: {finding['title']}")
         if t["status"] in ("waiting_human", "blocked", "failed"):
-            attention.append(f"- **{task_id}** is {t['status']}"
+            attention.append(_panel_attention(task_id, t, kind) if kind else
+                             f"- **{task_id}** is {t['status']}"
                              + (f": {t['reason']}" if t["reason"] else "")
                              + f". See tasks/{t['dir']}/STATUS.md.")
     selections = [(tid, state['tasks'][tid].get('provider_current')) for tid in state['order']]
@@ -1056,8 +1111,22 @@ def render_run_status(info, state, disposition=None, now=None, run_path=None):
                           f"    runner reject {info['name']} {task_id} -m \"why\""]
             elif t["status"] in ("failed", "blocked") or (
                     t["status"] == "pending" and t["kind"] == "produce" and _has_set_aside(run_path, t)):
-                lines.append(f"    runner retry {info['name']} {task_id}"
-                             + (" [--apply-patch]" if t["kind"] == "produce" else ""))
+                kind = _block_kind(t)
+                if kind:
+                    # Nobody judged this candidate, so continuing from the set-aside work is the
+                    # right default rather than one of two options: no brackets. The flag is
+                    # printed only when there is work to put back — an attempt that changed
+                    # nothing leaves `paths: []`, and `retry --apply-patch` refuses such a task
+                    # outright (D9), so an unconditional flag would name a command that fails.
+                    recover = " --apply-patch" if run_path and _has_set_aside(run_path, t) else ""
+                    lines += [f"    # {task_id}: " + (f"{PROTOCOL_BLOCK}." if kind == "protocol"
+                              else "one reviewer could not answer in the required form; another "
+                                   "did not finish."),
+                              f"    # Read the rejected answers in tasks/{t['dir']}/STATUS.md first.",
+                              f"    runner retry {info['name']} {task_id}{recover}"]
+                else:
+                    lines.append(f"    runner retry {info['name']} {task_id}"
+                                 + (" [--apply-patch]" if t["kind"] == "produce" else ""))
         for t in state["tasks"].values():
             for finding in t.get("ledger", {}).get("findings", []):
                 if finding["status"] == "escalated":
@@ -1109,11 +1178,20 @@ def _repaired_answers(ledger):
 
 
 def render_task_status(task_id, t, tdir, run_name):
-    lines = [f"# {task_id} — {t['status']}", "", f"Kind {t['kind']}, type {t['type']}."]
+    kind = _block_kind(t)
+    headline = t["status"] if not kind else (
+        f"blocked: {PROTOCOL_BLOCK}" if kind == "protocol" else
+        "blocked: the panel did not finish (one reviewer could not answer in the required form)")
+    lines = [f"# {task_id} — {headline}", "", f"Kind {t['kind']}, type {t['type']}."]
     if t["reason"]:
         lines.append(f"Reason: {t['reason']}")
     if t["commit"]:
         lines.append(f"Accepted as commit {t['commit']}. See commit.json.")
+    if kind == "protocol":
+        lines += ["", "This is a protocol failure of the panel, not a judgement of the work. No "
+                  "finding from these rounds reached the ledger."]
+    if kind:
+        lines += ["", "Why each reviewer did not finish:"] + _reviewer_causes(t)
     entries = sorted(n for n in os.listdir(tdir)
                      if n.startswith(("attempt-", "round-")) and os.path.isdir(os.path.join(tdir, n)))
     entries.sort(key=lambda n: (n.split("-")[0], int(n.split("-")[1])))

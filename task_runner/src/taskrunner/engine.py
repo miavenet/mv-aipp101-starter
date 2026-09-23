@@ -361,10 +361,17 @@ class Engine(ProviderRouting, Panels):
             return self.set_aside(task)
         raise EngineStop(f"task '{tid}' is the active producer but has no step; the state is damaged")
 
-    def end(self, task, status, reason):
-        """Decide the unsuccessful end of a producer; the set-aside itself is the next step."""
+    def end(self, task, status, reason, block_kind=None):
+        """Decide the unsuccessful end of a producer; the set-aside itself is the next step.
+
+        `block_kind` classifies an unsuccessful end for the reader: "protocol" when every broken
+        reviewer failed at the protocol level, "mixed" when only some did, None otherwise. It is
+        carried in `st["final"]` and applied by `set_aside` with the status."""
         st = self.st(task["id"])
-        st.update(step="set-aside", final={"status": status, "reason": reason})
+        final = {"status": status, "reason": reason}
+        if block_kind:
+            final["block_kind"] = block_kind
+        st.update(step="set-aside", final=final)
         self.run.save()
         return None
 
@@ -959,11 +966,20 @@ class Engine(ProviderRouting, Panels):
         if st.get("attempt_dir"):
             self.run.close_directory(os.path.join(self.run.path, st["attempt_dir"]))
         st.update(status=final["status"], reason=final["reason"], step=None, session_id=None)
+        # The classification of this end, and nothing older: a producer that blocked for a
+        # protocol failure and blocks again on a substantive one must not keep the old label.
+        if final.get("block_kind"):
+            st["block_kind"] = final["block_kind"]
+        else:
+            st.pop("block_kind", None)
+            st.pop("block_reviewers", None)
         st.pop("pending_set_aside", None)                   # the step is done; nothing to replay
         self.run.state["active_producer"] = None
         self.mark_skips()
         self.save()
-        self.say(f"{tid}: {final['status']} ({final['reason']}). Its work is in failed.patch")
+        cause = (record.PROTOCOL_BLOCK if final.get("block_kind") == "protocol"
+                 else final["reason"])
+        self.say(f"{tid}: {final['status']} ({cause}). Its work is in failed.patch")
         return None
 
 
@@ -1297,6 +1313,8 @@ def retry(run, engine, git, task_id, apply_patch=False):
     st.pop("pending_protocol_tries", None)
     st.pop("pending_protocol_error", None)
     st.pop("panel", None)
+    st.pop("block_kind", None)                              # the label of an end being undone
+    st.pop("block_reviewers", None)
     st.pop("apply_patch", None)                             # an older runner's request
     st.pop("recover", None)                                 # without the flag: cancelled
     st.update(status="pending", reason="", final=None, step=None, feedback=None,

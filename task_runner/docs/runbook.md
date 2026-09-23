@@ -159,3 +159,7 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
 
 See [NYSE execution lessons](nyse-execution-lessons.md) for observed failures, recovery
 evidence, shipped fixes and proposed resilience regression scenarios.
+
+See [Runner gaps field notes](runner-gaps-field-notes.md) for what a 19-task, reviewed
+implementation run cost against its estimate, the eight things that broke on the way, and what
+to price differently next time.

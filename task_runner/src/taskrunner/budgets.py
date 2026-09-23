@@ -1,6 +1,11 @@
 """Budget reservations live in agent intents; settlement is one durable state transition."""
 
 
+class Paused(Exception):
+    """The owner asked for a pause (`runner pause`); raised only where a call is about to start,
+    so the run stops with the same bookkeeping as a budget stop and nothing in flight is lost."""
+
+
 class Exhausted(Exception):
     pass
 

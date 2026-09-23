@@ -25,7 +25,13 @@ def check_gates(wf):
                 for n, command in enumerate(task['run'], 1):
                     planned.append((task, f"{task['id']}:check:{n}", {'run': command, 'new': False}))
         results = []
+        done = {}     # (command, timeout) -> the result of its first run: the tree is the same
         for number, (task, name, gate) in enumerate(planned, 1):
+            key = (gate['run'], task['gate_timeout_min'])
+            if key in done and not gate.get('new'):
+                first = done[key]
+                results.append(dict(first, id=name, new=False, same_as=first['id']))
+                continue
             with tempfile.TemporaryDirectory(prefix='task-runner-gates-') as tmp:
                 root = os.path.join(tmp, 'repo')
                 subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', 'clone', '-q', '--no-hardlinks',
@@ -54,6 +60,8 @@ def check_gates(wf):
                 results.append({'id': name, 'command': gate['run'], 'new': gate.get('new', False),
                                 'result': status, 'fails_as_intended': intended, 'exit': ran['exit'],
                                 'changed_paths': litter, 'embedded_repositories': embedded, 'log': log})
+                if not gate.get('new'):
+                    done[key] = results[-1]
         report = {'results': results, 'ok': all(r['result'] == 'pass' or
                   (r['result'] == 'fail' and r['fails_as_intended']) for r in results)}
         record.write_durable(os.path.join(directory, 'results.json'), record.dump_json(report))

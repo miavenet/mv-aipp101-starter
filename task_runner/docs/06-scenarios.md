@@ -134,6 +134,7 @@ workflow runs.
 | FRZ-07 | a reviewer or an agent modifies `state.json`, a `findings.json`, or a decision-bearing file in a finished directory **(A9, B8)** | the job fails, and the reason says which file of the run record was changed | `frz: the record protects itself` |
 | FRZ-08 | a task sets `protected = []`, or a narrower list than the workflow's **(B9)** | the workflow's protected paths still apply to it | `frz: protection cannot be narrowed` |
 | FRZ-09 | an `implement` task, a reviewer and a gate are run; then a `summarize` task **(B8)** | only the `summarize` call has `TASK_RUNNER_RUN_DIR` in its environment | `frz: the record is exported only where needed` |
+| FRZ-10 | B's candidate touches A's outputs, and A and B share the same gate command | the command runs once against the candidate; the regression entry for A's gate carries the same result and names the verifier that ran it (`same_as`). Likewise `check-gates` runs each distinct command once on the untouched tree, `new` gates excepted | `frz: a gate shared by the tasks a candidate touches runs once` |
 | FRZ-10 | a gate runs `python3 tools/check.py`, and the author edits `tools/check.py` without listing it in `writes` **(B9)** | the edit is reverted as a protected file and the attempt does not pass | `frz: files a gate executes are protected` |
 
 ## Failure and the DAG (FAIL)
@@ -192,6 +193,24 @@ workflow runs.
 | RUN-29 | a rejected answer holds **four** `findings` entries: one wholly valid; one a bare string; one an object with no `title`; one an object with a string `title` and `"severity": 7`. This is the mixed-entry fixture: its `findings` entries are themselves malformed, so, unlike RUN-26, it does not fail on the sibling field alone **(G2)** | the summary holds **two** readable titles — the valid one, and the `severity: 7` one, recorded as `"severity": "unknown"` — and counts the other **two** as `"unreadable_findings": 2`, rendered as "2 further entries could not be read". Nothing is guessed at | `run: unreadable finding entries are counted, not guessed` |
 | RUN-30 | a run saved by the runner **before** this change is stopped at `panel:outcomes-recorded` and resumed by the runner after it. The round already holds `invocation-1`, a quota failure that refunded its try, and `invocation-2`, whose persisted `raw_outcome` is a malformed answer, checkpointed with `tries == 1` **(G2)** | the recovered `invocation` is exactly `…/round-1/invocation-2` — not `invocation-1`, which a tries-indexed rule would have named; the producer's STATUS.md holds one summary for that answer and points at `invocation-2`; `invocation-2/outcome.json` records the protocol error instead of `ok`; `invocation-1/outcome.json` is **byte-identical** to before the resume and is named nowhere; the ledger is byte-identical; `tries` is still 1, so the reviewer keeps the retries the interrupted run had left; and the completed call is not made again | `run: a panel checkpointed before this change is resumed with its answers` |
 | RUN-31 | the same upgrade, but the highest-numbered invocation's `outcome.json` is absent, or is present and does not equal the job's persisted `raw_outcome`. The run is driven through the **whole** sequence — the pre-replay pass, `collect_reader` (which pops `raw_outcome`), the rejection, and `reject_answer`'s own recovery call **(G2)** | the refusal is recorded once and holds: the summary is written with its verdict, its titles and its diagnostic and carries **no** invocation pointer; the second recovery call does not adopt the directory the first refused; every `outcome.json` in the round is byte-identical to before the resume, the present-but-mismatched one included; exactly one summary exists after a replay; and the reviewer's next try, if it has one, gets a real invocation path | `run: a refused recovery stays refused through the rejection` |
+
+### Provider failures (PROV)
+
+| ID | WHEN | THEN | Test |
+|---|---|---|---|
+| PROV-11 | a review call fails at the provider (capacity, overload, a dropped connection: the `transient` outcome), and the reviewer has a qualified `fallback_agents` entry | the call is made again within the reviewer's three tries; from the second failure on it goes to the fallback; the answer that arrives is the panel's answer and the producer is not blocked | `prov: reviewer transient failure` |
+| PROV-12 | a review call runs past its time limit | same as PROV-11: a time-out is not the reviewer's answer | `prov: reviewer timeout` |
+| PROV-13 | a producer call fails at the provider | the call is made again within the protocol-retry budget without spending an attempt, on the fallback from the second failure; if every try fails the run stops with "the provider kept failing", no attempt used, and `resume` tries again | `prov: producer transient failure` |
+| PROV-14 | an agent reports that the API cannot be reached (DNS, no network) | environment failure: the run stops with the cause and no attempt is used; `resume` when the network is back | `prov: unreachable API is an environment failure` |
+| PROV-15 | a reviewer's failed tool command prints text that mentions an environment marker (source code with `FileNotFoundError`, documentation saying "not logged in") | not an environment failure: markers match whole words, and an agent's own tool output is checked only for sandbox startup failures; provider failures count only on the error channel | `prov: tool output is not the provider error channel` |
+
+### Pausing (PAUSE)
+
+| ID | WHEN | THEN | Test |
+|---|---|---|---|
+| PAUSE-01 | `runner pause RUN` while a runner works on RUN | the runner finishes what is in flight and stops before its next agent call, command or review batch: the state is `stopped` with a reason beginning "paused", no intent is left to reconcile, the request file is cleared, and `resume` continues without repeating a call | `pause: at a safe point` |
+| PAUSE-02 | `runner pause RUN --now` while an agent call is in flight | the process named in the run lock (not any process by name) gets SIGTERM, stops its children and exits; the lock is released; the call in flight is lost, and `resume` reconciles it and runs the attempt again | `pause: --now` |
+| PAUSE-03 | `runner pause RUN` when no live runner holds RUN | nothing happens and the command says so; a stale request file is removed | `pause: no runner` |
 
 ## Git (GIT)
 

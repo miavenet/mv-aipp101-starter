@@ -661,6 +661,26 @@ class Run:
                 problems.append(f"{name} was changed")
         return problems
 
+    # -- pause requests -----------------------------------------------------------------------
+
+    PAUSE_FILE = "pause.requested"
+
+    def pause_path(self):
+        return os.path.join(self.path, self.PAUSE_FILE)
+
+    def request_pause(self, by="owner"):
+        """`runner pause` leaves this file; the engine reads it before starting any call."""
+        write_durable(self.pause_path(), dump_json({"requested_at": _utc_now_iso(), "by": by}))
+
+    def pause_requested(self):
+        return os.path.exists(self.pause_path())
+
+    def clear_pause(self):
+        try:
+            os.remove(self.pause_path())
+        except FileNotFoundError:
+            pass
+
     def integrity_check(self):
         problems = []
         for rel, digest in sorted(self._manifest()["files"].items()):
@@ -898,7 +918,7 @@ _RECONCILERS = {"replan": _reconcile_replan, "branch": _reconcile_branch,
 # -- rendering ----------------------------------------------------------------------------------
 
 RUN_HEADLINE = {"running": "in progress", "done": "done", "failed": "failed",
-                "needs_human": "needs a person", "stopped": "stopped: out of budget"}
+                "needs_human": "needs a person", "stopped": "stopped"}
 
 
 def _money(x):
@@ -1131,7 +1151,9 @@ def render_run_status(info, state, disposition=None, now=None, run_path=None):
             for finding in t.get("ledger", {}).get("findings", []):
                 if finding["status"] == "escalated":
                     lines.append(f"    runner resolve {info['name']} {finding['id']} --as resolved|advisory|upheld")
-        lines.append(f"    runner resume {info['name']}" + (" --add-budget USD" if state["status"] == "stopped" else ""))
+        lines.append(f"    runner resume {info['name']}"
+                     + (" --add-budget USD" if state["status"] == "stopped"
+                        and not str(state.get("stop_reason", "")).startswith("paused") else ""))
     return "\n".join(lines) + "\n"
 
 

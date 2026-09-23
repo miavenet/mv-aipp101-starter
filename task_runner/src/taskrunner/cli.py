@@ -5,6 +5,7 @@ import math
 import os
 import sys
 import signal
+import time
 from types import SimpleNamespace
 import uuid
 
@@ -94,6 +95,16 @@ def _main(argv=None):
     p.add_argument("-C", dest="where", default=".", metavar="DIR")
     p.add_argument("--add-budget", type=float, default=0, metavar="USD")
     p.set_defaults(func=cmd_resume)
+
+    p = sub.add_parser("pause", help="stop a running run at the next safe point (before its next "
+                       "call), or --now; prints the resume command")
+    p.add_argument("run", nargs="?", default="latest")
+    p.add_argument("--now", action="store_true", help="interrupt the call in flight instead of "
+                   "waiting for it; that call's work and spend are lost")
+    p.add_argument("--wait", type=float, default=60, metavar="MIN",
+                   help="how long to wait for the runner to reach a safe point (default 60)")
+    p.add_argument("-C", dest="where", default=".", metavar="DIR")
+    p.set_defaults(func=cmd_pause)
 
     p = sub.add_parser("resolve", help="settle an escalated review finding")
     p.add_argument("run")
@@ -289,6 +300,7 @@ def cmd_check_gates(args):
     for result in report["results"]:
         text = "fails as intended" if result["result"] == "fail" and result["fails_as_intended"] else result["result"]
         print(f"{result['id']}: {text}" +
+              (f" (same command as {result['same_as']})" if result.get("same_as") else "") +
               ("; changed paths: " + ", ".join(result["changed_paths"]) if result["changed_paths"] else ""))
     print("record: " + report["directory"])
     return EXIT_OK if report["ok"] else EXIT_FAILED
@@ -433,6 +445,52 @@ def _open_run(args, unfinished_only=False):
     git = gitops.Git(run.info["git_toplevel"])
     lock = record.Lock(runs_dir).acquire(run.state["run_id"])
     return run, git, lock
+
+
+def cmd_pause(args):
+    """A pause is addressed to the runner through its own lock, never by process name."""
+    runs_dir = _runs_dir(args.where)
+    try:
+        path = record.resolve_run(runs_dir, args.run, unfinished_only=args.run in (None, "", "latest"))
+        run = record.Run.load(path)
+    except record.RecordError as exc:
+        return fail(str(exc))
+    holder = record.Lock(runs_dir).holder() or {}
+    identity = holder.get("process") or {}
+    if holder.get("run_id") != run.state["run_id"] or not record.is_alive(identity):
+        run.clear_pause()
+        print(f"run {run.name} is {run.state['status']}; no runner is working on it, nothing to pause",
+              file=sys.stderr)
+        return EXIT_OK
+    pid = identity["pid"]
+    if args.now:
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + 120
+        how = "interrupted"
+    else:
+        run.request_pause()
+        deadline = time.monotonic() + args.wait * 60
+        how = "paused"
+        print(f"pause requested; the runner (pid {pid}) stops before its next call. In flight now:",
+              file=sys.stderr)
+        for intent in run.state.get("intents", []):
+            if intent.get("kind") in ("agent", "command"):
+                print(f"  {intent['kind']} of '{intent.get('task', '?')}' since {intent.get('at', '?')}",
+                      file=sys.stderr)
+    while record.is_alive(identity):
+        if time.monotonic() > deadline:
+            if args.now:
+                return fail(f"the runner (pid {pid}) did not exit within 2 minutes of SIGTERM; "
+                            "look at it before resuming")
+            return fail(f"the runner (pid {pid}) has not reached a safe point in {args.wait:g} min; "
+                        "the request stays in place and it will stop at the next one, or pass "
+                        "--now to interrupt the call in flight")
+        time.sleep(0.5)
+    run = record.Run.load(path)
+    print(f"run {run.name}: {how}; {run.state['status']}"
+          + (f" ({run.state['stop_reason']})" if run.state.get("stop_reason") else ""), file=sys.stderr)
+    print(f"Continue with: runner resume {run.name}", file=sys.stderr)
+    return EXIT_OK
 
 
 def cmd_resume(args):

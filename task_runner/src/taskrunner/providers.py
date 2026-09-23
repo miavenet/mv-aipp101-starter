@@ -50,6 +50,27 @@ class ProviderRouting:
         raise EngineStop(f"no qualified available provider for '{task['id']}'; saved work retained. "
                          "Inspect provider-selection events; resume after quota cooldown or replan profiles")
 
+    def step_to_fallback(self, task, reason):
+        """After a transient provider failure: move to the next qualified, available fallback,
+        if the task has one. Returns its name, or None when there is nowhere to go."""
+        st = self.st(task['id'])
+        names = [task['agent']] + task.get('fallback_agents', [])
+        current = st.get('selected_provider', task['agent'])
+        if current not in names:
+            current = task['agent']
+        qualifications = st.get('provider_qualifications', {})
+        exhausted = self.run.state.get('provider_quota', {})
+        for name in names[names.index(current) + 1:]:
+            profile = self.wf['agents'][name]
+            entry = qualifications.get(name)
+            if entry is None or qualification.required(task, profile) - set(entry['capabilities']):
+                continue
+            if exhausted.get(quota_scope(name, profile), {}).get('until', 0) > time.time():
+                continue
+            self.record_provider_switch(task, name, reason)
+            return name
+        return None
+
     def record_provider_switch(self, task, name, reason):
         st = self.st(task['id'])
         previous = st.get('selected_provider', task['agent'])

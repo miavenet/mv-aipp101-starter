@@ -105,6 +105,12 @@ class Engine(ProviderRouting, Panels):
         return [self.tasks[i] for i in self.order
                 if self.tasks[i]["kind"] == kind and self.tasks[i].get("verifies") == tid]
 
+    def pause_point(self, what):
+        """Before a call starts: stop here if the owner asked for a pause. Nothing is running at
+        a pause point, so the stop needs no reconciliation and loses no work."""
+        if self.run.pause_requested():
+            raise budgets.Paused(f"paused at the owner's request before {what}")
+
     # -- the loop (05, The engine loop) ------------------------------------------------------
 
     def execute(self):
@@ -157,6 +163,14 @@ class Engine(ProviderRouting, Panels):
                     self.st(task["id"]).update(status="waiting_human",
                                                reason="waiting for a person's approval")
                     self.save()
+        except budgets.Paused as stop:
+            state.update(status="stopped", stop_reason=str(stop))
+            self.remember_tree()
+            self.save()
+            self.run.clear_pause()
+            self.run.event("pause-stop", reason=str(stop))
+            self.say(f"runner: {stop}. Continue with runner resume")
+            return EXIT_FAILED
         except budgets.Exhausted as stop:
             state.update(status="stopped", stop_reason=str(stop))
             self.remember_tree()
@@ -285,6 +299,7 @@ class Engine(ProviderRouting, Panels):
     def run_commands(self, commands, tid, adir, timeout_min):
         results, problems = [], []
         for command in commands:
+            self.pause_point(f"the next command of '{tid}'")
             op = self.run.begin("command", task=tid, command=command)
             guard = self.run.integrity_begin()
             startup_problems = []
@@ -451,6 +466,21 @@ class Engine(ProviderRouting, Panels):
                     task, self.template(task), brief=self.brief(task), inputs=self.inputs(task),
                     feedback=feedback, attempt=st['attempts_used'] + 1, frozen=self.frozen(tid), caps=caps)
                 continue
+            if result.status == agents.TRANSIENT:
+                # The provider failed, not the author: another call, on a fallback profile from
+                # the second failure on, within the protocol-retry budget and without an attempt.
+                st["provider_failures"] = st.get("provider_failures", 0) + 1
+                st["session_id"] = None
+                continuing = False
+                if st["provider_failures"] >= 2 and self.step_to_fallback(
+                        task, f"provider failed twice: {result.error[:200]}"):
+                    selected = self.provider_task(task)
+                    agent = agents.make(selected['agent'], self.wf['agents'][selected['agent']])
+                prompt = prompts.produce_prompt(
+                    task, self.template(task), brief=self.brief(task), inputs=self.inputs(task),
+                    feedback=feedback, attempt=st['attempts_used'] + 1, frozen=self.frozen(tid), caps=caps)
+                self.run.save()
+                continue
             if result.status == agents.OK:
                 try:
                     responded = findings.respond(self.ledger(tid), result.structured, n)
@@ -480,6 +510,12 @@ class Engine(ProviderRouting, Panels):
             qualification.invalidate(self.run, tid)
             raise EngineStop(f"environment failure in task '{tid}': {result.error}. No attempt "
                              "was used. Fix the cause, then `runner resume`")
+        if result.status == agents.TRANSIENT:
+            st["pending_protocol_tries"] = max(0, st.get("pending_protocol_tries", 0) - 1)
+            st.pop("provider_failures", None)
+            raise EngineStop(f"the provider kept failing on task '{tid}': {result.error}. No attempt "
+                             "was used. Wait, or replan its profile, then `runner resume`")
+        st.pop("provider_failures", None)
 
         st.pop("pending_attempt", None)
         st.pop("pending_protocol_tries", None)
@@ -520,6 +556,7 @@ class Engine(ProviderRouting, Panels):
 
     def call_agent(self, agent, task, adir, prompt, session_id):
         tid = task["id"]
+        self.pause_point(f"the next call of '{tid}'")
         reservation = budgets.cap_for(agent, task)
         if not budgets.fits(self.run.state, reservation):
             raise budgets.Exhausted(f"budget cannot cover the next call of '{tid}' (${reservation:g})")
@@ -775,9 +812,20 @@ class Engine(ProviderRouting, Panels):
                                      in self.git.changed_paths(candidate, now)], candidate)
         results, failure = [], None
         plan = self.plan_verifiers(task)
+        already = {}      # commands -> the verifier that ran them against this candidate
         i = 0
         while i < len(plan) and not failure:
             v = plan[i]
+            key = tuple(v["commands"])
+            if v["task"] is None and key in already:
+                # The same commands against the same tree give the same answer: a candidate that
+                # touches the outputs of several accepted tasks sharing one gate runs it once.
+                first = already[key]
+                entry = dict(first, verifier=v["id"], kind=v["kind"], config_sha256=_config_hash(v),
+                             same_as=first["verifier"])
+                results.append(entry)
+                i += 1
+                continue
             ran, problems = self.run_commands(v["commands"], tid, adir, v["timeout_min"])
             self.crash("verify:after-command")
             after = self.snapshot()
@@ -786,6 +834,8 @@ class Engine(ProviderRouting, Panels):
                      "result": "pass" if checks.passed(ran, v["commands"]) else "fail",
                      "runs": [{k: r[k] for k in ("command", "result", "exit", "seconds")}
                               for r in ran]}
+            if v["task"] is None and after == candidate:
+                already[key] = entry
             if problems:
                 self.run.write_decision(os.path.join(adir, "verification.json"),
                                         {"candidate": candidate, "results": results + [entry]})

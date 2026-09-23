@@ -14,6 +14,17 @@ from . import proc, record, validate, activity
 
 OK, ENVIRONMENT, PROTOCOL_ERROR, AGENT_ERROR, TIMED_OUT, INTERRUPTED = (
     "ok", "environment", "protocol-error", "agent-error", "timed-out", "interrupted")
+TRANSIENT = "transient"      # the provider failed, not the agent: worth another call
+
+
+def transient_error(text):
+    """Provider-side failures that a later call may not see: capacity, overload, a dropped
+    connection. Only error-channel evidence, like `quota_error`."""
+    return isinstance(text, str) and bool(re.search(
+        r"at capacity|overloaded|server (?:is )?busy|temporarily unavailable|service unavailable|"
+        r"try again later|(?:connection|socket) (?:reset|timed out|closed)|"
+        r"ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|EPIPE|\b(?:502|503|504|529)\b.*(?:error|gateway|unavailable|overloaded)",
+        text, re.IGNORECASE))
 
 
 QUOTA = "quota"
@@ -162,20 +173,36 @@ def claim_invocation(path):
         raise InvocationError("this invocation directory has already been used") from exc
 
 
-# Match failures of the execution/authentication machinery, not ordinary failing tests.
-ENVIRONMENT_MARKERS = (
+# Match failures of the execution/authentication machinery, not ordinary failing tests. Each
+# marker matches as whole words, so `ENOTFOUND` is not seen inside `FileNotFoundError`.
+STARTUP_MARKERS = (
     "bwrap: no permissions to create a new namespace", "sandbox failed to start",
     "failed to create sandbox", "unprivileged user namespaces are unavailable",
+)
+PROVIDER_MARKERS = (
     "invalid api key", "invalid_api_key", "authentication failed", "not logged in",
+    "can't reach the api server", "can’t reach the api server", "enotfound", "network is unreachable",
     "unexpected argument", "unknown option", "invalid value for", "please run /login", "please run codex login", "error loading config", "invalid configuration",
 )
+ENVIRONMENT_MARKERS = STARTUP_MARKERS + PROVIDER_MARKERS
 
 
-def environment_error(text):
+def _marker_pattern(markers):
+    return re.compile("|".join(r"(?<![\w])" + re.escape(m) + r"(?![\w])" for m in markers), re.IGNORECASE)
+
+
+_ALL_MARKERS = _marker_pattern(ENVIRONMENT_MARKERS)
+_STARTUP_ONLY = _marker_pattern(STARTUP_MARKERS)
+
+
+def environment_error(text, startup_only=False):
+    """The first line of `text` naming an environment failure. Text an agent's own tool commands
+    printed is checked for startup failures only: source code or documentation that mentions
+    "not logged in" is not evidence that the agent is."""
     if not isinstance(text, str):
         return ""
-    return next((line[:2000] for line in text.splitlines()
-                 if any(marker in line.lower() for marker in ENVIRONMENT_MARKERS)), "")
+    pattern = _STARTUP_ONLY if startup_only else _ALL_MARKERS
+    return next((line[:2000] for line in text.splitlines() if pattern.search(line)), "")
 
 
 def process_failure(res):
@@ -264,12 +291,15 @@ class CodexEvents:
                         self.text = ""
                         self.malformed = True
                 elif item.get("type") == "command_execution" and item.get("exit_code") not in (None, 0):
-                    self.environment = environment_error(item.get("aggregated_output", "")) or self.environment
+                    self.environment = (environment_error(item.get("aggregated_output", ""), startup_only=True)
+                                        or self.environment)
 
     def result(self, res):
         failure = process_failure(res)
         if self.failed and quota_error(self.failed) and res.status != "timed-out":
             failure = AgentResult(QUOTA, error=self.failed, seconds=res.seconds)
+        elif self.failed and transient_error(self.failed) and res.status != "timed-out":
+            failure = AgentResult(TRANSIENT, error=self.failed, seconds=res.seconds)
         if self.environment:
             failure = AgentResult(ENVIRONMENT, error=self.environment, seconds=res.seconds)
         if failure:
@@ -277,7 +307,8 @@ class CodexEvents:
             return failure
         status, error = OK, ""
         if self.failed:
-            status, error = (QUOTA if quota_error(self.failed) else AGENT_ERROR), self.failed
+            status, error = (QUOTA if quota_error(self.failed) else
+                             TRANSIENT if transient_error(self.failed) else AGENT_ERROR), self.failed
         elif self.malformed or not self.completed or self.open_turn or self.message_after_completion:
             status, error = PROTOCOL_ERROR, "missing successful terminal event or malformed event stream"
         answer = last_json_object(self.text) if isinstance(self.text, str) else None
@@ -358,10 +389,16 @@ class ClaudeAgent(HeadlessAgent):
                 envelope = json.loads(text)
             except ValueError:
                 envelope = {}
+            # A non-zero exit with a result envelope: the envelope says what the failure was.
             if (failure.status == AGENT_ERROR and isinstance(envelope, dict)
-                    and envelope.get('type') == 'result' and envelope.get('is_error') is True
-                    and quota_error(envelope.get('result'))):
-                failure.status, failure.error = QUOTA, envelope['result']
+                    and envelope.get('type') == 'result' and envelope.get('is_error') is True):
+                said = envelope.get('result')
+                if quota_error(said):
+                    failure.status, failure.error = QUOTA, said
+                elif environment_error(said):
+                    failure.status, failure.error = ENVIRONMENT, environment_error(said)
+                elif transient_error(said):
+                    failure.status, failure.error = TRANSIENT, said
             if failure.status != QUOTA:
                 return failure
         try:
@@ -394,6 +431,8 @@ class ClaudeAgent(HeadlessAgent):
             status, error = AGENT_ERROR, f"Claude result subtype: {data.get('subtype')}"
             if quota_error(final) or data.get('subtype') in ('error_rate_limit', 'error_usage_limit'):
                 status, error = QUOTA, final or error
+            elif transient_error(final):
+                status, error = TRANSIENT, final
         if status == OK and not isinstance(answer, dict):
             status, error = PROTOCOL_ERROR, "Claude's final answer is not a JSON object"
         cost = data.get("total_cost_usd")

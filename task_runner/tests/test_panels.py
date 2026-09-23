@@ -508,8 +508,9 @@ gate=["test ! -f src/a"]
         """run: a timeout is not a malformed answer (RUN-24, the mixed panel)"""
         from taskrunner import agents
         a, b = self.setup_panel()
-        self.script({'make': [GOOD], a: [{'raw_answer': 'prose'}] * 3, b: [PASS]})
-        self.fail_on(b, agents.TIMED_OUT, 'no terminal result in time', {1})
+        # A time-out is retried like any provider failure; only a third one is the panel's answer.
+        self.script({'make': [GOOD], a: [{'raw_answer': 'prose'}] * 3, b: [PASS] * 3})
+        self.fail_on(b, agents.TIMED_OUT, 'no terminal result in time', {1, 2, 3})
         self.assertEqual(self.start(), 255, self.output)
         # The console keeps the whole reason: no reviewer is given another's explanation.
         self.assertIn('make: blocked (review panel could not produce valid answers:', self.output)
@@ -538,8 +539,8 @@ gate=["test ! -f src/a"]
         """run: a timeout is not a malformed answer (RUN-24, the timed-out panel)"""
         from taskrunner import agents
         a, b = self.setup_panel()
-        self.script({'make': [GOOD], a: [PASS], b: [PASS]})
-        self.fail_on(b, agents.TIMED_OUT, 'no terminal result in time', {1})
+        self.script({'make': [GOOD], a: [PASS], b: [PASS] * 3})
+        self.fail_on(b, agents.TIMED_OUT, 'no terminal result in time', {1, 2, 3})
         self.assertEqual(self.start(), 255, self.output)
         run, status, task_status = self.both_status_files()
         t = run.state['tasks']['make']

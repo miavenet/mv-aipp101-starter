@@ -107,6 +107,7 @@ attempt n (own directory, numbered once, never reused):
   │  now ignores (B3) ................. runner removes or reverts it; feedback, next attempt
   snapshot CANDIDATE; pin it
   run own gates, then verifying checks, then regression gates of accepted tasks this one touched
+  (a command already run against this candidate is not run again; the record says whose run it shares)
   │   after each: snapshot; the whole snapshot must still equal CANDIDATE. If not, the runner
   │   restores CANDIDATE; all results are void unless the check is marked `restores` (B7)
   ├─ fails ............................ feedback = output tail
@@ -202,7 +203,8 @@ start.
 |---|---|
 | Sandbox or namespace startup, missing binary | **Environment failure.** Stop the run with the cause. No attempt is used |
 | Authentication or configuration | Environment failure, before any producer attempt |
-| Transient transport error or rate limit | Bounded backoff; every invocation's record is kept |
+| Provider capacity, overload, a dropped connection (`transient`), or a time-out of a review call | Another call within the same try budget, on a `fallback_agents` profile from the second failure on. Not a producer attempt; a review panel is not blocked by it. Every invocation's record is kept |
+| The API cannot be reached (DNS, no network) | Environment failure: stop with the cause, no attempt used |
 | No terminal event, or an invalid answer | **Protocol retry**, at most twice, fresh invocation directory. Not a producer attempt, not a finding |
 | A valid answer with `blocked` | The engine records `blocked` with the reason |
 | A valid review leaving an open blocker | Producer rework, which uses a producer attempt |

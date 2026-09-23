@@ -494,6 +494,24 @@ gate = ["true"]
         self.assertEqual(self.git_out("show", "HEAD:src/a.txt"), "good")
         self.check_invariants()
 
+    def test_a_shared_gate_runs_once_per_candidate(self):
+        """frz: a gate shared by the tasks a candidate touches runs once (FRZ-10)"""
+        import tempfile
+        counter = os.path.join(tempfile.mkdtemp(prefix="gate-count-"), "count")
+        gate = f"echo x >> {counter}"
+        self.workflow(self.TWO.replace('gate = ["grep -q good src/a.txt"]', f'gate = ["{gate}"]')
+                      .format(b_extra='writes = ["src/b.txt", "src/a.txt"]')
+                      .replace('gate = ["true"]', f'gate = ["{gate}"]'))
+        self.script([{"write": {"src/a.txt": "good\n"}, "answer": done()},
+                     {"write": {"src/b.txt": "b\n", "src/a.txt": "also b\n"}, "answer": done()}])
+        self.assertEqual(self.start(), 0, self.output)
+        results = self.read_json("b", "attempt-1", "verification.json")["results"]
+        self.assertEqual([(r["verifier"], r["result"], r.get("same_as")) for r in results],
+                         [("gate:1", "pass", None), ("regression:a:gate:1", "pass", "gate:1")])
+        with open(counter) as fh:
+            self.assertEqual(fh.read(), "x\nx\n")    # a's own gate, then b's: once, not twice
+        self.check_invariants()
+
     def test_stale_acceptance_is_shown(self):
         """frz: stale acceptance is shown (FRZ-06)"""
         self.workflow('''
@@ -2217,6 +2235,91 @@ Task {task.id}
         self.assertEqual(self.resume(), 0, self.output)
         self.assertNotIn("work tree changed", self.output)
         self.assert_recovered_once()
+
+
+class Pause(EngineCase):
+    TWO = ONE + '''
+[[task]]
+id = "more"
+type = "implement"
+needs = ["make"]
+prompt = "Make src/b.txt say good."
+outputs = ["src/b.txt"]
+gate = ["grep -q good src/b.txt"]
+'''
+    GOOD_B = {"write": {"src/b.txt": "good\n"}, "answer": done()}
+
+    def test_a_requested_pause_stops_before_the_next_call(self):
+        """pause: at a safe point (PAUSE-01): nothing in flight is lost, resume continues"""
+        self.workflow(self.TWO)
+        self.script([GOOD, self.GOOD_B])
+        # The request is already there when the second task would start its call.
+        import taskrunner.engine as eng
+        original = eng.Engine.call_agent
+
+        def call_agent(engine, agent, task, *args, **kw):
+            if task["id"] == "more":
+                engine.run.request_pause()
+            return original(engine, agent, task, *args, **kw)
+        eng.Engine.call_agent = call_agent
+        self.addCleanup(setattr, eng.Engine, "call_agent", original)
+        self.assertEqual(self.start(), 2)
+        self.assertIn("paused at the owner's request before the next call of 'more'", self.output)
+        self.assertNotIn("--add-budget", self.output)
+        run = self.the_run()
+        self.assertEqual(run.state["status"], "stopped")
+        self.assertEqual(self.status("make"), "accepted")
+        self.assertEqual(self.status("more"), "running")           # its transaction is open, no call yet
+        self.assertEqual(self.calls(), 1)
+        self.assertFalse(run.pause_requested())                    # cleared, so resume does not re-pause
+        self.assertEqual(run.state["intents"], [])                 # nothing to reconcile
+        with open(os.path.join(run.path, "STATUS.md"), encoding="utf-8") as fh:
+            status = fh.read()
+        self.assertIn("The run stopped: paused at the owner's request", status)
+        self.assertNotIn("--add-budget", status)
+        eng.Engine.call_agent = original
+        self.assertEqual(self.resume(), 0)
+        self.assertEqual(self.status("more"), "accepted")
+        self.assertEqual(self.calls(), 2)
+        self.check_invariants()
+
+    def test_pause_with_no_runner_is_a_no_op(self):
+        self.workflow(ONE + '[[task]]\nid = "look"\ntype = "human"\nverifies = "make"\n')
+        self.script([GOOD])
+        self.assertEqual(self.start(), 255)
+        self.assertEqual(self.runner("pause", "-C", self.root), 0)
+        self.assertIn("no runner is working on it, nothing to pause", self.output)
+        self.assertFalse(self.the_run().pause_requested())
+
+    def test_pause_now_interrupts_a_live_runner_by_its_lock(self):
+        """pause: --now (PAUSE-02): the runner named in the lock is stopped, the call is lost"""
+        self.workflow(ONE)
+        self.script([{"sleep_s": 600, **GOOD}, GOOD])
+        runner = subprocess.Popen([sys.executable, RUNNER, "start", self.wf_path], cwd=self.root,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: runner.poll() is None and runner.kill())
+        import time
+        from taskrunner import record
+        lock = record.Lock(os.path.join(self.root, ".runs"))
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            holder = lock.holder()
+            if holder and record.is_alive(holder.get("process")) and self.calls() == 1:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail("the runner did not start its agent call")
+        self.assertEqual(self.runner("pause", "--now", "-C", self.root), 0)
+        self.assertIn("interrupted", self.output)
+        self.assertIn("Continue with: runner resume", self.output)
+        _out, err = runner.communicate(timeout=15)
+        self.assertEqual(runner.returncode, 2, err)
+        self.assertIn("interrupted; child processes stopped", err)
+        self.assertIsNone(lock.holder())                           # released
+        self.assertEqual(self.resume(), 0)                         # reconciles the lost call, runs again
+        self.assertEqual(self.status("make"), "accepted")
+        self.assertEqual(self.calls(), 2)
+        self.check_invariants()
 
 
 if __name__ == "__main__":

@@ -243,6 +243,7 @@ class Panels:
                     break
             if not batch:
                 raise budgets.Exhausted('budget cannot cover the next panel call')
+            self.pause_point(f"the next review batch of '{tid}'")
             try:
                 outcomes, problems = self.reader_batch(batch, candidate)
             except (prompts.EvidenceTooLarge, prompts.FindingsTooLarge) as exc:
@@ -286,6 +287,14 @@ class Panels:
         if outcome.status == agents.PROTOCOL_ERROR:
             self.reject_answer(job, tid, status=outcome.status, error=outcome.error,
                                structured=outcome.structured)
+        elif outcome.status in (agents.TRANSIENT, agents.TIMED_OUT) and job['tries'] < 3:
+            # A provider failure or a time-out is not the reviewer's answer: call again within
+            # the same three tries, and from the second one on a fallback profile when the task
+            # has one. The job stays pending.
+            job['provider_failures'] = job.get('provider_failures', 0) + 1
+            if job['provider_failures'] >= 2:
+                self.step_to_fallback(self.tasks[job['task']],
+                                      f"provider failed twice on this review: {outcome.error[:200]}")
         elif outcome.status != agents.OK:
             job['result'] = {'status': outcome.status, 'error': outcome.error}
 

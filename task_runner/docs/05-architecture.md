@@ -137,7 +137,12 @@ full BASE-to-CANDIDATE diff. In a later round, members with open blocking findin
 reviewer last saw, kept in the ledger as `last_seen_candidate`, to the current one. After `retry`
 every member starts again at round 1, and old open findings are closed as `superseded`. A reviewer always runs in a new session, read-only. Whether a reviewer
 blocks is computed from the ledger after its answer is applied; the model's `verdict` field must
-agree or the answer is a protocol failure.
+agree or the answer is a protocol failure. **One narrow repair is allowed (G2):** an answer whose
+only defect is `resolutions` entries naming no finding in the ledger, in a round that requires none,
+is accepted with those entries dropped — but only when the repaired answer still derives a block, so
+the repair can never turn a pass into acceptance. Because the coordinator applies a panel's members
+to the ledger sequentially, in workflow order, eligibility is decided by the ledger at each
+reviewer's own turn, not by the ledger a concurrent call happened to see.
 
 ## Agent interface
 ```python
@@ -149,6 +154,11 @@ class Agent:
 AgentResult: status, text, structured, session_id, cost_usd | None, usage, error, seconds
   status: ok | blocked-by-environment | protocol-error | agent-error | timed-out | interrupted
 ```
+
+A blocked producer's `block_kind` (G2) distinguishes a panel that failed at the protocol level
+(every broken reviewer's status was `protocol-error`) from one that timed out or errored (`mixed`,
+or absent when there was no protocol failure at all), classified from the broken reviewers' actual
+statuses above, never assumed from the call site that reports the panel exhausted.
 
 | | Claude Code | Codex | Any command |
 |---|---|---|---|

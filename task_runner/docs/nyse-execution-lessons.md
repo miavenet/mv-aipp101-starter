@@ -116,6 +116,11 @@ Use stable incident IDs. Improvements listed here are proposals unless marked sh
 - Follow-up: expose phase, invocation/retry reason, last artifact/checkpoint age and last
   accepted milestone. Given a protocol retry, status should identify that reason instead
   of implying a new implementation attempt. Preserve unknown cost as unknown.
+- Shipped (G2): a blocked producer's status and STATUS.md now distinguish a panel that could
+  not answer in the required form (`block_kind = "protocol"`) from one where some reviewer
+  simply did not finish (`"mixed"`, per-reviewer cause) from an ordinary substantive block
+  (`block_kind` absent) — so "protocol/review churn" is no longer read off a single `blocked`
+  label.
 
 ## Review priorities after this exercise
 
@@ -251,6 +256,15 @@ protocol retries receive their recorded validation diagnostic and instructions t
 saved work. Regression scenario proves a fabricated ID is rejected, the next invocation
 receives the exact error, the saved candidate survives, and acceptance takes one attempt.
 Do not reinterpret arbitrary descriptions as IDs or silently discard invalid responses.
+
+Shipped (G2): the same shape of mistake on the *review* side — a reviewer listing a new
+finding's title under `resolutions`, which is reserved for the ids of open blocking findings
+— is now repaired without a model call when a round requires no resolutions and dropping the
+junk entries still leaves the answer blocking, so the finding is not lost to a third identical
+call and three burned tries; a real ledger id is still never reinterpreted this way and stays a
+protocol error (NYSE-R08's rule). Every rejected review answer, repaired or not, is now
+summarised for the owner — its claimed verdict and finding titles, with a pointer to the
+invocation that held it — so a discarded answer's content is never silently gone either.
 
 ### Task-based provider selection — requested direction, not implemented
 

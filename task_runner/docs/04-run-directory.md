@@ -51,7 +51,8 @@ first eight characters of its UUID, the same pair as its branch `run/<workflow>-
               stdout.log  stderr.log  streamed as they arrive, so a crash loses nothing
               last-message.txt
               schema.json
-              outcome.json            ok | protocol-error | agent-error | timed-out | interrupted | environment
+              outcome.json            ok | protocol-error | agent-error | timed-out | interrupted | environment;
+                                      the status that was used, including a rejection by the ledger check (G2)
             invocation-2/             only after a protocol retry
             result.json               the validated answer, plus cost, usage, seconds, session id
             inputs.json               hashes of the upstream outputs this attempt was given (A10)
@@ -73,7 +74,8 @@ first eight characters of its UUID, the same pair as its branch `run/<workflow>-
           round-1/                    counted per reviewer: its first sight of a candidate (A7)
             prompt.md
             invocation-1/             as for a producer; invocation-2/ after a protocol retry (B8)
-            verdict.json              the validated answer, the candidate it judged, the diff base it was shown
+            verdict.json              the validated answer, the candidate it judged, the diff base it was shown,
+                                      plus `repair` when the runner dropped meaningless `resolutions` entries (G2)
           round-2/
         012-design.review.spec-compliance/
         020-implement/
@@ -115,6 +117,10 @@ first eight characters of its UUID, the same pair as its branch `run/<workflow>-
    session to its task. `TASK_RUNNER_RUN_DIR` is exported **only to tasks whose type sets
    `needs_run_dir = true`** (B8), which in the starter library is `summarize` alone. Gates and checks
    never receive it.
+8. **A rejected review answer is summarised, not lost (G2).** Whatever a panel rejects — at
+   collection or at final application — is redacted at capture and appended into `state.json`, then
+   pointed at from the producer's `STATUS.md`. The raw text stays where it always did, in that
+   invocation's `last-message.txt`.
 
 ## `run.json`
 

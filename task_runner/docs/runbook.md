@@ -18,7 +18,8 @@ flowchart TB
     H --> H1{"what is it waiting for?"}
     H1 -- "human task" --> AP["approve / reject -m NOTE<br/>then resume"]
     H1 -- "escalated finding" --> RS["resolve FINDING --as resolved|advisory|upheld<br/>then resume"]
-    H1 -- "task blocked" --> BL["read the reason, fix the brief or the gate, replan<br/>(either order), then retry TASK [--apply-patch], resume"]
+    H1 -- "no valid answers from the panel" --> BLP["nobody judged the work: read the rejected answers in<br/>tasks/NNN-task/STATUS.md, then run the retry TASK [--apply-patch]<br/>command the run's own STATUS.md 'Next' prints, resume"]
+    H1 -- "findings open / the agent said blocked" --> BL["read the reason, fix the brief or the gate, replan<br/>(either order), then retry TASK [--apply-patch], resume"]
     F --> F1{"run status?"}
     F1 -- "stopped (budget)" --> BUD["resume --add-budget USD"]
     F1 -- "failed task" --> RT["read tasks/NNN-task/STATUS.md and failed.patch,<br/>retry TASK [--apply-patch], resume"]
@@ -86,6 +87,8 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
 | finding X is escalated | Read both sides in `findings.json`. `runner resolve RUN X --as resolved\|advisory\|upheld -m "why"`. Then `resume` |
 | TASK is blocked: the agent said … | The brief, the inputs or a gate is wrong. Fix the workflow, then, in either order, `runner replan RUN` and `runner retry RUN TASK --apply-patch` to keep the set-aside work (`runner retry RUN TASK` starts clean instead; nothing at all is needed once a replan has already reset the task to pending). Then `runner resume RUN` |
 | TASK is blocked: attempts ran out with findings open | Read the findings. Either settle them yourself, then `runner retry RUN TASK --apply-patch`, or change the brief and `runner retry RUN TASK` to start clean. Then `runner resume RUN` |
+| TASK is blocked: the reviewers could not answer in the required form | Nobody judged the work. Read the rejected answers in `tasks/NNN-task/STATUS.md`, then run the exact `runner retry RUN TASK …` command the **run's** `<run>/STATUS.md` "Next" section prints — `--apply-patch` when there is set-aside work to put back, plain `retry` when the attempt changed nothing. Then `resume` |
+| TASK is blocked: one reviewer could not answer in the required form and another did not finish | One reviewer's answers were rejected and are summarised in `tasks/NNN-task/STATUS.md`; the other's own cause (a timeout, an error, an interruption) is named beside it. Read both, then run the exact `runner retry RUN TASK …` command the **run's** `<run>/STATUS.md` "Next" section prints — `--apply-patch` when there is set-aside work to put back, plain `retry` otherwise. Then `resume` |
 | stopped: out of budget | `runner resume RUN --add-budget 20` |
 
 ## 4. Failures — to verify at stages 2 and 3
@@ -130,6 +133,7 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
 | What did the agent print? | `…/attempt-N/invocation-N/stdout.log`, `stderr.log` |
 | Why did the attempt not pass? | `…/attempt-N/gate.log`, `reverted.json`, the next attempt's `feedback.md` |
 | What did review find, and was it fixed? | `tasks/NNN-task/findings.json` |
+| What did a rejected reviewer answer say? | `tasks/NNN-task/STATUS.md`, then the `invocation-N/last-message.txt` it names |
 | What work is waiting to be put back, and how | `tasks/NNN-task/set-aside.json` |
 | What was verified against which candidate? | `…/attempt-N/verification.json` |
 | What did it cost? | `run.json`: known, reserved and unpriced spend |

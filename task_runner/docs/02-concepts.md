@@ -205,6 +205,17 @@ is applied, the runner computes whether any blocking finding of that reviewer is
 finding left `unresolved` blocks even if the reviewer raised nothing new. The model's own `verdict`
 field must agree with the computed one, or the answer is invalid and is retried as a protocol error.
 
+**One narrow repair, without a model call (G2).** An answer whose only defect is `resolutions`
+entries that name no finding in this producer's ledger, in a round where the required set is empty,
+is accepted with those entries dropped rather than retried: the round asked for nothing, so `[]` is
+the only correct value and dropping is not a guess about what the reviewer meant. The repair never
+fires if any entry names a real ledger id — that is a reviewer confused about a real finding, and
+stays a protocol error — and it is allowed **only when the repaired answer still derives a block**,
+so it can never turn a would-be pass into an acceptance and can never manufacture one; a passing
+answer with junk `resolutions` is still a protocol error. Eligibility is decided by the ledger the
+answer is finally applied to, not the one a concurrent reviewer's call happened to see, because
+reviewers on the same panel are applied to the ledger sequentially, in workflow order.
+
 **Round 1** is a full review of the whole candidate. **Later rounds judge the fix.** A reviewer who
 blocked is given its own open **blocking** findings, the author's response to each, and the rework
 diff. It must mark each of those `resolved` or `unresolved`, each exactly once. A reviewer with no
@@ -315,7 +326,10 @@ because retrying the work cannot fix the machine.
 `objected`; a verifier whose producer ended before it could run is `skipped`. The skip closure
 follows `needs`, `reviews` and `verifies` together, so every task always has a status (B7). A panel
 whose members cannot produce a valid answer leaves its producer `blocked`, not `failed`: a person
-is needed to repair the panel.
+is needed to repair the panel. The record distinguishes, per reviewer, a panel that could not
+answer in the required form from one that simply did not finish (a timeout, an agent error, an
+interruption), and every rejected answer is summarised — its claimed verdict and finding titles,
+never guessed at from a field that happened to be malformed — in the producer's `STATUS.md` (G2).
 
 When a task fails or is blocked:
 

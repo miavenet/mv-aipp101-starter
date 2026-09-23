@@ -1066,6 +1066,48 @@ def render_run_status(info, state, disposition=None, now=None, run_path=None):
     return "\n".join(lines) + "\n"
 
 
+def _rejected_answer_headline(entry):
+    """What one rejected answer claimed, read from its summary alone and never judged here."""
+    verdict, found, unreadable = entry["verdict"], entry["findings"], entry["unreadable_findings"]
+    if verdict is None:
+        return "no readable answer" if not found and not unreadable else "no readable verdict"
+    if not found:
+        return f"claimed verdict `{verdict}`, no findings"
+    return f"claimed verdict `{verdict}`, {len(found)} finding" + ("s" if len(found) > 1 else "")
+
+
+def _render_rejected_answer(entry):
+    lines = [f"- **{entry['reviewer']}**, round {entry['round']}, try {entry['try']} — "
+             f"{_rejected_answer_headline(entry)}:"]
+    lines += [f"  - {f['severity']}: {f['title']}" for f in entry["findings"]]
+    if entry["unreadable_findings"]:
+        lines.append(f"  - {entry['unreadable_findings']} further entries could not be read")
+    lines.append(f"  Rejected because: {entry['error']}")
+    if entry.get("invocation"):
+        lines.append(f"  Answer: `{entry['invocation']}/last-message.txt`")
+    return lines
+
+
+def _repaired_answers(ledger):
+    """(reviewer, round, dropped entries) per repaired review answer, oldest first, derived from
+    the `repair` history event `findings.apply_review` leaves on every finding a repaired answer
+    raised, so this needs no new state.
+
+    Answers are told apart by the `answer` discriminator that event carries: the findings of one
+    answer share it, and no two answers do, so a repair keeps its own line for the life of the run
+    whatever happens to its findings afterwards — a response, a resolution, or a retry, which
+    supersedes them and clears the reviewers' rounds, so that the next repair is round 1 again. An
+    event written before that field existed groups by its reviewer and round, as it did then."""
+    answers = {}
+    for f in (ledger or {}).get("findings", []):
+        repair = next((h for h in f["history"] if h["event"] == "repair"), None)
+        if repair is not None:
+            answers.setdefault((f["reviewer"], repair["round"], repair.get("answer")),
+                               repair["dropped"])
+    return [(reviewer, round_no, dropped)
+            for (reviewer, round_no, _answer), dropped in answers.items()]
+
+
 def render_task_status(task_id, t, tdir, run_name):
     lines = [f"# {task_id} — {t['status']}", "", f"Kind {t['kind']}, type {t['type']}."]
     if t["reason"]:
@@ -1095,6 +1137,21 @@ def render_task_status(task_id, t, tdir, run_name):
         r = t["recovered"]
         lines += ["", f"The set-aside work of attempt {r['attempt']} was put back before attempt "
                   f"{r['attempt'] + 1} ({r['files']} files)."]
+    if t.get("rejected_reviews"):
+        lines += ["", "## Rejected review answers", "",
+                  "Not applied. Nothing below is in the ledger and none of it changed acceptance. "
+                  "Read it before you retry: the concerns in it may be real.", ""]
+        for entry in t["rejected_reviews"]:
+            lines += _render_rejected_answer(entry)
+    repaired = _repaired_answers(t.get("ledger"))
+    if repaired:
+        lines += ["", "## Repaired review answers", ""]
+        for reviewer, round_no, dropped in repaired:
+            what = ("1 meaningless `resolutions` entry was dropped" if len(dropped) == 1 else
+                    f"{len(dropped)} meaningless `resolutions` entries were dropped")
+            lines.append(f"- **{reviewer}**, round {round_no}: {what} and the answer was applied. "
+                         "The entries named no finding in the ledger, and the round required none. "
+                         "See findings.json.")
     return "\n".join(lines) + "\n"
 
 

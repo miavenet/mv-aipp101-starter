@@ -370,6 +370,68 @@ gate=["test ! -f src/a"]
         self.assertEqual(entry['unreadable_findings'], 2)
         self.check_invariants()
 
+    def test_rejected_review_answers_are_summarised_for_the_owner(self):
+        """run: rejected review answers are summarised for the owner (RUN-18)"""
+        a, b = self.setup_panel()
+        self.script({'make': [GOOD], a: [{'answer': review([finding()])}],
+                     b: [{'answer': self.COLLIDING}] * 3})
+        self.assertEqual(self.start(), 255, self.output)
+        self.assertEqual((self.count(a), self.count(b)), (1, 3))
+        run = self.the_run()
+        self.assertEqual(run.state['tasks']['make']['status'], 'blocked')
+        self.assertEqual(self.ledger()['findings'], [])      # nothing below reached the ledger
+        with open(self.task_file('make', 'STATUS.md')) as fh:
+            status = fh.read()
+        self.assertIn('## Rejected review answers', status)
+        self.assertIn('Not applied. Nothing below is in the ledger and none of it changed '
+                      'acceptance. Read it before you retry: the concerns in it may be real.',
+                      status)
+        self.assertEqual(status.count('  - blocking: Fix this'), 3)
+        self.assertEqual(status.count("  Rejected because: resolutions must cover exactly this "
+                                      "reviewer's open blocking findings, each once: required none,"
+                                      " so resolutions must be []; supplied 'make/PE-1'. A new "
+                                      "finding belongs in findings only, never in resolutions"), 3)
+        for n in (1, 2, 3):
+            self.assertIn(f'- **{b}**, round 1, try {n} — claimed verdict `block`, 1 finding:',
+                          status)
+            inv = os.path.relpath(self.task_file(b, 'round-1', f'invocation-{n}'), run.path)
+            self.assertIn(f'  Answer: `{inv}/last-message.txt`', status)
+            with open(os.path.join(run.path, inv, 'last-message.txt')) as fh:
+                self.assertTrue(fh.read())
+        self.check_invariants()
+
+    def test_rejected_answers_are_redacted_and_bounded(self):
+        """run: rejected answers are redacted and bounded (RUN-20)"""
+        from taskrunner import proc
+        a, b = self.setup_panel()
+        self.script({'make': [GOOD], a: [PASS], b: [PASS]})
+        self.assertEqual(self.start(), 0, self.output)
+        eng = self.coordinator()
+        token = 'sk-ant-' + 'a' * 40
+        structured = {'verdict': 'block', 'summary': 's', 'resolutions': None,
+                      'findings': [dict(finding(), title=token + '\n\t' + 'x' * 500)]}
+        job = {'task': a, 'round': 1, 'tries': 2, 'invocation': None}
+        eng.note_rejected_answer(job, 'make', status='protocol-error',
+                                 error='answer.resolutions must be a JSON array, not null',
+                                 structured=structured)
+        eng.save()
+        title = eng.st('make')['rejected_reviews'][0]['findings'][0]['title']
+        self.assertIn(proc.REDACTED.decode(), title)
+        self.assertNotIn(token, title)
+        self.assertEqual(len(title), 121)
+        self.assertTrue(title.endswith('…'))
+        for control in ('\n', '\t'):
+            self.assertNotIn(control, title)
+        with open(self.task_file('make', 'STATUS.md')) as fh:
+            before = fh.read()
+        self.assertIn(f'  - blocking: {title}', before)
+        self.assertNotIn(token, before)
+        self.assertEqual(self.runner('status', 'latest', '--rebuild', '-C', self.root), 0,
+                         self.output)
+        with open(self.task_file('make', 'STATUS.md')) as fh:
+            self.assertEqual(fh.read(), before)
+        self.check_invariants()
+
     def review_job(self, run, rid):
         return next(j for j in run.state['tasks']['make']['panel']['jobs'] if j['task'] == rid)
 
@@ -619,7 +681,8 @@ gate=["test ! -f src/a"]
         self.assertEqual([h['event'] for h in ledger['findings'][0]['history']],
                          ['raised', 'repair', 'response', 'resolution'])
         self.assertEqual(ledger['findings'][0]['history'][1],
-                         {'event': 'repair', 'round': 1, 'kind': 'dropped_resolutions', 'dropped': ['Fix this']})
+                         {'event': 'repair', 'round': 1, 'answer': 1,
+                          'kind': 'dropped_resolutions', 'dropped': ['Fix this']})
         repairs = [e for e in self.events() if e['event'] == 'review-repair']
         self.assertEqual(len(repairs), 1)
         self.assertEqual({k: repairs[0][k] for k in ('task', 'producer', 'round', 'kind', 'dropped')},
@@ -631,6 +694,78 @@ gate=["test ! -f src/a"]
                                                    'a finding in the ledger'})
         self.assertEqual(result['answer']['resolutions'], by_title['resolutions'])
         self.check_invariants()
+
+    REPAIRED = ('1 meaningless `resolutions` entry was dropped and the answer was applied. The '
+                'entries named no finding in the ledger, and the round required none. '
+                'See findings.json.')
+
+    def test_a_repair_is_recorded_in_the_producers_status(self):
+        """fnd: a repair is recorded where it can be audited (FND-25, the STATUS line)"""
+        a, b = self.setup_panel()
+        by_title = review([finding()], resolutions=[dict(finding='Fix this', status='unresolved', note='n')])
+        fixed = dict(finding='make/PE-1', action='fixed', note='Fixed')
+        self.script({'make': [GOOD, {'write': {'src/a': 'better\n'}, 'answer': done(responses=[fixed])}],
+                     a: [{'answer': by_title}, {'answer': review(resolutions=[resolution()])}],
+                     b: [PASS, PASS]})
+        self.assertEqual(self.start(), 0, self.output)
+        with open(self.task_file('make', 'STATUS.md')) as fh:
+            status = fh.read()
+        self.assertIn('## Repaired review answers', status)
+        self.assertEqual(status.count(f'- **{a}**, round 1: {self.REPAIRED}'), 1)
+        self.assertNotIn('## Rejected review answers', status)
+        self.check_invariants()
+
+    def test_a_second_repair_after_a_retry_keeps_its_own_line(self):
+        """fnd: a repair is recorded where it can be audited (FND-25, a repeated repair)
+
+        `retry` supersedes the open findings and clears the reviewers' rounds, so an identical
+        answer repaired again on an identical candidate is round 1 for the second time. The two
+        answers stay two lines because the `repair` event carries its own discriminator."""
+        a, b = self.setup_panel(ONE.replace('gate=', 'max_attempts=1\ngate='))
+        by_title = review([finding()], resolutions=[dict(finding='Fix this', status='unresolved', note='n')])
+        self.script({'make': [GOOD, GOOD], a: [{'answer': by_title}, {'answer': by_title}],
+                     b: [PASS, PASS]})
+        self.assertEqual(self.start(), 255, self.output)
+        self.assertEqual(self.runner('retry', 'latest', 'make', '-C', self.root), 0, self.output)
+        self.assertEqual(self.resume(), 255, self.output)
+        ledger = self.ledger()
+        self.assertEqual([(f['id'], f['status']) for f in ledger['findings']],
+                         [('make/PE-1', 'superseded'), ('make/PE-2', 'open')])
+        repairs = [h for f in ledger['findings'] for h in f['history'] if h['event'] == 'repair']
+        self.assertEqual([(h['round'], h['answer'], h['dropped']) for h in repairs],
+                         [(1, 1, ['Fix this']), (1, 2, ['Fix this'])])
+        self.assertEqual(len([e for e in self.events() if e['event'] == 'review-repair']), 2)
+        with open(self.task_file('make', 'STATUS.md')) as fh:
+            status = fh.read()
+        self.assertEqual(status.count(f'- **{a}**, round 1: {self.REPAIRED}'), 2)
+        self.check_invariants()
+
+    def repair_lines(self, ledger):
+        """The rendered "Repaired review answers" entries of a producer holding this ledger."""
+        from taskrunner import record
+        t = {'status': 'blocked', 'kind': 'produce', 'type': 'implement', 'reason': '',
+             'commit': '', 'ledger': ledger}
+        status = record.render_task_status('make', t, self.side, 'run')
+        return [line for line in status.splitlines() if line.startswith('- **')]
+
+    def test_the_findings_of_one_repaired_answer_are_one_line(self):
+        """fnd: a repair is recorded where it can be audited (FND-25, one answer, one line)"""
+        from taskrunner import findings as ledgers
+        from test_findings import R
+        junk = [dict(finding='Fix this', status='unresolved', note='n')]
+        two = review([finding(), dict(finding(), title='Fix that')], resolutions=junk)
+        ledger = ledgers.apply_review(ledgers.empty('make'), R, two, 'C1', {})[0]
+        one_line = [f'- **{R["id"]}**, round 1: {self.REPAIRED}']
+        self.assertEqual(self.repair_lines(ledger), one_line)
+        # The line belongs to the answer, not to its findings: a response, a resolution and a
+        # retry are all ordinary transitions of the findings and leave it exactly as it was.
+        responses = [dict(finding=f'make/PE-{n}', action='fixed', note='Fixed') for n in (1, 2)]
+        ledger = ledgers.respond(ledger, done(responses=responses), 2)
+        ledger = ledgers.apply_review(ledger, R, review(resolutions=[resolution('make/PE-1'),
+                                                                     resolution('make/PE-2')]), 'C2', {})[0]
+        self.assertEqual([f['status'] for f in ledger['findings']], ['resolved', 'resolved'])
+        self.assertEqual(self.repair_lines(ledger), one_line)
+        self.assertEqual(self.repair_lines(ledgers.restart(ledger)), one_line)
 
     def test_a_repair_survives_a_colliding_sibling_that_retries_once(self):
         """fnd: a repair is recorded once, not once per pass (FND-25, retry-success)"""

@@ -75,6 +75,18 @@ def _dropped_text(text):
     return text if len(text) <= 200 else text[:200] + '…'
 
 
+def _next_repair(ledger):
+    """The discriminator that tells one repaired answer from the next. It is written once onto
+    every `repair` event of the answer it belongs to and never rewritten, so the findings of one
+    answer share it and no two answers do. It is counted from the repair events the ledger already
+    holds rather than from the reviewer's entry, because `restart` clears the reviewers on a retry
+    while the histories survive: two repairs either side of a retry are both round 1 and would
+    otherwise be indistinguishable. An event written before this field existed counts as 0."""
+    seen = [h.get('answer', 0) for f in ledger['findings'] for h in f['history']
+            if h['event'] == 'repair']
+    return max(seen, default=0) + 1
+
+
 def apply_review(ledger, reviewer, answer, candidate, changes):
     """Returns (ledger, verdict, repair). `repair` is None, or the record of the one repair
     this function is allowed to make. Atomic as before: on ProtocolError the caller's ledger is
@@ -106,10 +118,11 @@ def apply_review(ledger, reviewer, answer, candidate, changes):
                               for r in answer['resolutions']],
                   'why': 'the round required no resolutions and no entry named a finding in the ledger'}
         dropped_titles = [d['finding'] for d in repair['dropped']]
+        number = _next_repair(ledger)
         raised = result['findings'][len(result['findings']) - len(answer['findings']):]
         for f in raised:
             f['history'].append({'event': 'repair', 'round': f['history'][-1]['round'],
-                                 'kind': repair['kind'], 'dropped': dropped_titles})
+                                 'answer': number, 'kind': repair['kind'], 'dropped': dropped_titles})
         return result, verdict, repair
     result, verdict = _apply(ledger, reviewer, answer, candidate, changes)
     return result, verdict, None

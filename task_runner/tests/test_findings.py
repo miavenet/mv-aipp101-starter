@@ -97,8 +97,25 @@ class Findings(unittest.TestCase):
         self.assertEqual(verdict, 'block')
         self.assertEqual([x['event'] for x in result['findings'][0]['history']], ['raised', 'repair'])
         self.assertEqual(result['findings'][0]['history'][1],
-                         {'event': 'repair', 'round': 1, 'kind': f.REPAIR_DROPPED_RESOLUTIONS,
-                          'dropped': ['Fix this']})
+                         {'event': 'repair', 'round': 1, 'answer': 1,
+                          'kind': f.REPAIR_DROPPED_RESOLUTIONS, 'dropped': ['Fix this']})
+
+    def test_a_repaired_answer_is_told_apart_from_the_next(self):
+        """fnd: a repair is recorded where it can be audited (FND-25, the answer discriminator).
+        The ledger records no answer identity, and `restart` clears the reviewers' rounds, so the
+        `repair` event carries a counter of its own: the findings of one answer share it, and two
+        identical answers either side of a retry, both round 1, do not."""
+        answer = review([finding(), dict(finding(), title='Fix that')],
+                        resolutions=[dict(finding='Fix this', status='unresolved', note='n')])
+        first = f.apply_review(f.empty('make'), R, answer, 'C1', {})[0]
+        self.assertEqual([h['answer'] for x in first['findings'] for h in x['history']
+                          if h['event'] == 'repair'], [1, 1])
+        second = f.apply_review(f.restart(first), R, answer, 'C1', {})[0]
+        repairs = [h for x in second['findings'] for h in x['history'] if h['event'] == 'repair']
+        self.assertEqual([(h['round'], h['answer']) for h in repairs], [(1, 1), (1, 1), (1, 2), (1, 2)])
+        # Write-once: the retry appends to the first answer's findings and rewrites nothing.
+        self.assertEqual([x['history'][1] for x in second['findings'][:2]],
+                         [x['history'][1] for x in first['findings']])
 
     def test_a_real_id_is_never_repaired_away(self):
         """fnd: a real id is never repaired away (FND-22). Today's diagnostic, and atomicity."""

@@ -104,6 +104,7 @@ attempt n (own directory, numbered once, never reused):
   │  now ignores (B3) ................. runner removes or reverts it; feedback, next attempt
   snapshot CANDIDATE; pin it
   run own gates, then verifying checks, then regression gates of accepted tasks this one touched
+  (a command already run against this candidate is not run again; the record says whose run it shares)
   │   after each: snapshot; the whole snapshot must still equal CANDIDATE. If not, the runner
   │   restores CANDIDATE; all results are void unless the check is marked `restores` (B7)
   ├─ fails ............................ feedback = output tail

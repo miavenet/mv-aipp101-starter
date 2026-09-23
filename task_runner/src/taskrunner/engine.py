@@ -801,9 +801,20 @@ class Engine(ProviderRouting, Panels):
                                      in self.git.changed_paths(candidate, now)], candidate)
         results, failure = [], None
         plan = self.plan_verifiers(task)
+        already = {}      # commands -> the verifier that ran them against this candidate
         i = 0
         while i < len(plan) and not failure:
             v = plan[i]
+            key = tuple(v["commands"])
+            if v["task"] is None and key in already:
+                # The same commands against the same tree give the same answer: a candidate that
+                # touches the outputs of several accepted tasks sharing one gate runs it once.
+                first = already[key]
+                entry = dict(first, verifier=v["id"], kind=v["kind"], config_sha256=_config_hash(v),
+                             same_as=first["verifier"])
+                results.append(entry)
+                i += 1
+                continue
             ran, problems = self.run_commands(v["commands"], tid, adir, v["timeout_min"])
             self.crash("verify:after-command")
             after = self.snapshot()
@@ -812,6 +823,8 @@ class Engine(ProviderRouting, Panels):
                      "result": "pass" if checks.passed(ran, v["commands"]) else "fail",
                      "runs": [{k: r[k] for k in ("command", "result", "exit", "seconds")}
                               for r in ran]}
+            if v["task"] is None and after == candidate:
+                already[key] = entry
             if problems:
                 self.run.write_decision(os.path.join(adir, "verification.json"),
                                         {"candidate": candidate, "results": results + [entry]})

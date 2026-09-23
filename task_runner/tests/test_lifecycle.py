@@ -493,6 +493,24 @@ gate = ["true"]
         self.assertEqual(self.git_out("show", "HEAD:src/a.txt"), "good")
         self.check_invariants()
 
+    def test_a_shared_gate_runs_once_per_candidate(self):
+        """frz: a gate shared by the tasks a candidate touches runs once (FRZ-10)"""
+        import tempfile
+        counter = os.path.join(tempfile.mkdtemp(prefix="gate-count-"), "count")
+        gate = f"echo x >> {counter}"
+        self.workflow(self.TWO.replace('gate = ["grep -q good src/a.txt"]', f'gate = ["{gate}"]')
+                      .format(b_extra='writes = ["src/b.txt", "src/a.txt"]')
+                      .replace('gate = ["true"]', f'gate = ["{gate}"]'))
+        self.script([{"write": {"src/a.txt": "good\n"}, "answer": done()},
+                     {"write": {"src/b.txt": "b\n", "src/a.txt": "also b\n"}, "answer": done()}])
+        self.assertEqual(self.start(), 0, self.output)
+        results = self.read_json("b", "attempt-1", "verification.json")["results"]
+        self.assertEqual([(r["verifier"], r["result"], r.get("same_as")) for r in results],
+                         [("gate:1", "pass", None), ("regression:a:gate:1", "pass", "gate:1")])
+        with open(counter) as fh:
+            self.assertEqual(fh.read(), "x\nx\n")    # a's own gate, then b's: once, not twice
+        self.check_invariants()
+
     def test_stale_acceptance_is_shown(self):
         """frz: stale acceptance is shown (FRZ-06)"""
         self.workflow('''

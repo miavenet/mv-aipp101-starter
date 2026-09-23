@@ -294,6 +294,7 @@ def cmd_check_gates(args):
     for result in report["results"]:
         text = "fails as intended" if result["result"] == "fail" and result["fails_as_intended"] else result["result"]
         print(f"{result['id']}: {text}" +
+              (f" (same command as {result['same_as']})" if result.get("same_as") else "") +
               ("; changed paths: " + ", ".join(result["changed_paths"]) if result["changed_paths"] else ""))
     print("record: " + report["directory"])
     return EXIT_OK if report["ok"] else EXIT_FAILED

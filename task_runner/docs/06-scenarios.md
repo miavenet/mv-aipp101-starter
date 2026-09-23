@@ -122,6 +122,7 @@ Rows marked **(B*n*)** were added or changed after the
 | FRZ-07 | a reviewer or an agent modifies `state.json`, a `findings.json`, or a decision-bearing file in a finished directory **(A9, B8)** | the job fails, and the reason says which file of the run record was changed | `frz: the record protects itself` |
 | FRZ-08 | a task sets `protected = []`, or a narrower list than the workflow's **(B9)** | the workflow's protected paths still apply to it | `frz: protection cannot be narrowed` |
 | FRZ-09 | an `implement` task, a reviewer and a gate are run; then a `summarize` task **(B8)** | only the `summarize` call has `TASK_RUNNER_RUN_DIR` in its environment | `frz: the record is exported only where needed` |
+| FRZ-10 | B's candidate touches A's outputs, and A and B share the same gate command | the command runs once against the candidate; the regression entry for A's gate carries the same result and names the verifier that ran it (`same_as`). Likewise `check-gates` runs each distinct command once on the untouched tree, `new` gates excepted | `frz: a gate shared by the tasks a candidate touches runs once` |
 | FRZ-10 | a gate runs `python3 tools/check.py`, and the author edits `tools/check.py` without listing it in `writes` **(B9)** | the edit is reverted as a protected file and the attempt does not pass | `frz: files a gate executes are protected` |
 
 ## Failure and the DAG (FAIL)

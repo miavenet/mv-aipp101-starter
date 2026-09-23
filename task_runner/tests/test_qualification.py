@@ -155,6 +155,16 @@ class GatePreflight(RepoCase):
         self.assertTrue(report['results'][1]['fails_as_intended'])
         self.assertFalse(report['ok'])
 
+    def test_the_same_command_is_checked_once(self):
+        wf = self.workflow(['"true"', '"true"', '{run="true",new=true,fail_pattern="x"}'],
+                           '[[task]]\nid="also"\ntype="implement"\nprompt="p"\noutputs=["b.txt"]\ngate=["true"]\n')
+        report = preflight.check_gates(wf)
+        self.assertEqual([(r['id'], r['result'], r.get('same_as')) for r in report['results']],
+                         [('make:gate:1', 'pass', None), ('make:gate:2', 'pass', 'make:gate:1'),
+                          ('make:gate:3', 'objection', None), ('also:gate:1', 'pass', 'make:gate:1')])
+        logs = [f for f in os.listdir(report['directory']) if f.endswith('.log')]
+        self.assertEqual(len(logs), 2)                 # `new` gates are always run on their own
+
     def test_wrong_failures_are_errors(self):
         wf = self.workflow(['{run="nonexistent-command-xyz",new=true,fail_pattern="missing"}',
                             '{run="exit 126",new=true,fail_pattern="."}',

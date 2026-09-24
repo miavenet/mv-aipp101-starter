@@ -278,6 +278,10 @@ class Panels:
         if outcome.status == agents.ENVIRONMENT:
             from . import qualification
             job['tries'] = max(0, job['tries'] - 1)
+            if agents.network_error(outcome.error):                    # PROV-16
+                raise EngineStop(f"the network is down: the call of reviewer '{job['task']}' could "
+                                 f"not reach the provider ({outcome.error}). `runner resume` when "
+                                 "it is back")
             qualification.invalidate(self.run, job['task'])
             raise EngineStop(f"environment failure in reviewer '{job['task']}': {outcome.error}")
         if outcome.status == agents.OK:

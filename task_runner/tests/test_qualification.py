@@ -168,6 +168,38 @@ class Invalidation(EngineCase):
         self.assertEqual(self.resume(), 0, self.output)
         self.check_invariants()
 
+    def test_a_network_failure_keeps_the_cached_qualification(self):
+        """prov: the network is down (PROV-16): the run stops, nothing about the profile is
+        forgotten, and `resume` continues without probing again"""
+        self.workflow(TASK)
+        self.script([{'write':{'out.txt':'done'},'answer':done()}])
+        original = agents.CommandAgent.run
+        calls = []
+        def offline(agent, prompt, **kwargs):
+            if 'task_runner_probe' in prompt:
+                calls.append('probe')
+                return original(agent, prompt, **kwargs)
+            calls.append('call')
+            if calls.count('call') == 1:
+                return agents.AgentResult(agents.ENVIRONMENT, error="API Error: Can't reach the API "
+                                          "server \u2014 check your internet or DNS (ENOTFOUND)")
+            return original(agent, prompt, **kwargs)
+        with patch.object(agents.CommandAgent, 'run', offline):
+            self.assertEqual(self.start(), 2, self.output)
+            self.assertIn('the network is down', self.output)
+            self.assertIn('No attempt was used', self.output)
+            run = self.the_run()
+            key = run.state['tasks']['make']['qualification_key']
+            cache = record.read_json(os.path.join(self.root, '.runs', 'qualification-cache.json'))
+            self.assertIn(key, cache['entries'])
+            self.assertNotIn('needs_qualification', run.state)
+            self.assertEqual(run.state['tasks']['make']['attempts_used'], 0)
+            probes = calls.count('probe')
+            self.assertEqual(self.resume(), 0, self.output)
+            self.assertEqual(calls.count('probe'), probes)           # nothing was probed again
+        self.assertEqual(self.the_run().state['tasks']['make']['status'], 'accepted')
+        self.check_invariants()
+
 class GatePreflight(RepoCase):
     def workflow(self, gates, checks=''):
         wf = self.load('name="gates"\n[[task]]\nid="make"\ntype="implement"\n'

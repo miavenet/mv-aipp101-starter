@@ -33,8 +33,8 @@ CLI version and known user/project settings-file hashes. Project settings files 
 the scratch repository; profile-specific external integrations still need the same dependencies
 and access on the host. Configuration contents and environment dumps are not included in the
 qualification metadata. Hashes cannot capture every external service or dynamic configuration
-change; a run-time environment failure invalidates the cached entry, and `doctor --force` always
-repeats the probes. Resume rechecks the fingerprint before making calls.
+change; a run-time environment failure invalidates the cached entry (a network outage does not,
+PROV-16), and `doctor --force` always repeats the probes. Resume rechecks the fingerprint before making calls.
 
 The latest report is `.runs/qualification.json`; individual probe logs are under `.runs/doctor/`.
 A run receives its qualification report and profile metadata. Probe costs incurred by that start

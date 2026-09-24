@@ -203,6 +203,7 @@ workflow runs.
 | PROV-13 | a producer call fails at the provider | the call is made again within the protocol-retry budget without spending an attempt, on the fallback from the second failure; if every try fails the run stops with "the provider kept failing", no attempt used, and `resume` tries again | `prov: producer transient failure` |
 | PROV-14 | an agent reports that the API cannot be reached (DNS, no network) | environment failure: the run stops with the cause and no attempt is used; `resume` when the network is back | `prov: unreachable API is an environment failure` |
 | PROV-15 | a reviewer's failed tool command prints text that mentions an environment marker (source code with `FileNotFoundError`, documentation saying "not logged in") | not an environment failure: markers match whole words, and an agent's own tool output is checked only for sandbox startup failures; provider failures count only on the error channel | `prov: tool output is not the provider error channel` |
+| PROV-16 | an agent call fails because the network is down (PROV-14's cause) | the run stops as for PROV-14, but the profile's cached qualification is kept: `doctor` learned nothing wrong about it, and `resume` continues without probing again. Any other environment failure still discards the cache | `prov: the network is down` |
 
 ### Pausing (PAUSE)
 

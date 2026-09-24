@@ -510,6 +510,11 @@ class Engine(ProviderRouting, Panels):
                             + "; ".join(problems))
         if result.status == agents.ENVIRONMENT:
             st["pending_protocol_tries"] = max(0, st.get("pending_protocol_tries", 0) - 1)
+            if agents.network_error(result.error):                    # PROV-16
+                self.save()
+                raise EngineStop(f"the network is down: the call of '{tid}' could not reach the "
+                                 f"provider ({result.error}). No attempt was used. `runner resume` "
+                                 "when it is back")
             qualification.invalidate(self.run, tid)
             raise EngineStop(f"environment failure in task '{tid}': {result.error}. No attempt "
                              "was used. Fix the cause, then `runner resume`")

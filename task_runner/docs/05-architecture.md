@@ -236,7 +236,9 @@ profile hash, host identity and capability; `doctor --force` repeats it. **Host 
 content of `/etc/machine-id` where it exists, otherwise the host name, joined with `uname -srm`. A
 container that shares a machine id with its host but cannot start a sandbox differs in profile
 behaviour, not identity, so a cached result is also discarded whenever a run meets an environment
-failure. The cache lives in `.runs/qualification-cache.json` and is written like state: temporary
+failure, except one that says the network was down (the API could not be reached, `ENOTFOUND`):
+that says nothing about the profile, and `resume` continues without probing again (PROV-16). The
+cache lives in `.runs/qualification-cache.json` and is written like state: temporary
 file, sync, rename.
 
 **Review modes.** A reviewer with `read` does a repository review. A reviewer with only `answer`

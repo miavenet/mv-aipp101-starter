@@ -179,9 +179,11 @@ STARTUP_MARKERS = (
     "bwrap: no permissions to create a new namespace", "sandbox failed to start",
     "failed to create sandbox", "unprivileged user namespaces are unavailable",
 )
-PROVIDER_MARKERS = (
-    "invalid api key", "invalid_api_key", "authentication failed", "not logged in",
+NETWORK_MARKERS = (
     "can't reach the api server", "can’t reach the api server", "enotfound", "network is unreachable",
+)
+PROVIDER_MARKERS = NETWORK_MARKERS + (
+    "invalid api key", "invalid_api_key", "authentication failed", "not logged in",
     "unexpected argument", "unknown option", "invalid value for", "please run /login", "please run codex login", "error loading config", "invalid configuration",
 )
 ENVIRONMENT_MARKERS = STARTUP_MARKERS + PROVIDER_MARKERS
@@ -193,6 +195,14 @@ def _marker_pattern(markers):
 
 _ALL_MARKERS = _marker_pattern(ENVIRONMENT_MARKERS)
 _STARTUP_ONLY = _marker_pattern(STARTUP_MARKERS)
+_NETWORK = _marker_pattern(NETWORK_MARKERS)
+
+
+def network_error(text):
+    """An environment failure that says nothing about the agent's setup: the network was down.
+    What `doctor` learned about the profile still holds, so a run stopped for this is not
+    re-qualified on `resume`."""
+    return isinstance(text, str) and bool(_NETWORK.search(text))
 
 
 def environment_error(text, startup_only=False):

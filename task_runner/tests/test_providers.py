@@ -299,6 +299,9 @@ fallback_agents=["backup"]
         envelope['result'] = 'API Error: 529 {"type":"error","error":{"type":"overloaded_error"}}'
         self.assertEqual(claude.interpret(result(json.dumps(envelope).encode(), code=1)).status, agents.TRANSIENT)
         self.assertFalse(agents.transient_error('the test suite failed: connection handling is wrong'))
+        self.assertTrue(agents.network_error("API Error: Can't reach the API server (ENOTFOUND)"))
+        self.assertFalse(agents.network_error('invalid api key'))
+        self.assertFalse(agents.network_error('sandbox failed to start'))
 
 
 class ModelPolicy(RepoCase):

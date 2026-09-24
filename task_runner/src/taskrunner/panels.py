@@ -471,7 +471,7 @@ class Panels:
                 reservation=budgets.cap_for(item['agent'],t)
                 self.run.state['spend']['reserved_usd']+=reservation
                 item['reservation']=reservation; job['tries']+=1
-                item['op']=self.run.begin('agent',task=t['id'],reservation=reservation,
+                item['op']=self.run.begin('agent',task=t['id'],reservation=reservation,agent_kind=item['agent'].kind,
                                          invocation_dir=os.path.relpath(inv,self.run.path))
             else:
                 item['op']=self.run.begin('command',task=t['id'],command=t['run'])

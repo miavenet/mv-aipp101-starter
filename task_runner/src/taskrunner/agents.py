@@ -8,8 +8,12 @@ the engine decides what follows.
 import json
 import math
 import os
+import datetime
+import glob
 import re
 import subprocess
+import time
+import uuid
 
 from . import proc, record, validate, activity
 
@@ -42,14 +46,40 @@ def quota_error(text):
 
 class AgentResult:
     def __init__(self, status, text="", structured=None, session_id=None, cost_usd=None,
-                 usage=None, error="", seconds=0.0):
+                 usage=None, error="", seconds=0.0, usage_source="terminal"):
         self.status, self.text, self.structured = status, text, structured
         self.session_id, self.cost_usd, self.usage = session_id, cost_usd, usage or {}
         self.error, self.seconds = error, seconds
+        self.usage_source = usage_source      # "terminal": the provider's final event; "provider-record": read from its on-disk record after a call that had no final event
 
     def outcome(self):
         return {"status": self.status, "error": self.error, "seconds": round(self.seconds, 3),
-                "session_id": self.session_id, "cost_usd": self.cost_usd, "usage": self.usage}
+                "session_id": self.session_id, "cost_usd": self.cost_usd, "usage": self.usage,
+                "usage_source": self.usage_source}
+
+
+def _epoch(stamp):
+    """Seconds since the epoch of an ISO-8601 UTC stamp such as 2026-09-23T07:04:19.280Z."""
+    try:
+        return datetime.datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def partial_usage(kind, invocation_dir, since, env=None):
+    """Usage of a call that ended without the provider's terminal event (interrupted, timed out,
+    killed as an orphan), read from the provider's own record on disk: a Claude session
+    transcript, or a Codex rollout. Only rows stamped at or after `since` (epoch seconds) count,
+    so a resumed session's earlier turns are left out. Returns {} when nothing can be read; the
+    call then stays "unknown usage" (G4)."""
+    agent = REGISTRY.get(kind)
+    reader = getattr(agent, "read_provider_record", None)
+    if reader is None or since is None:
+        return {}
+    try:
+        return reader(invocation_dir, float(since), env if env is not None else os.environ)
+    except (OSError, ValueError, TypeError, KeyError):
+        return {}
 
 
 def last_json_object(text):
@@ -346,12 +376,19 @@ class HeadlessAgent(Agent):
         def on_stdout(data):
             parser.feed(data)
             telemetry.feed(data)
+        started_at = time.time()
         res = proc.run_process(argv, cwd=cwd, env=env, stdin_data=prompt.encode("utf-8"),
                                stdout_path=os.path.join(invocation_dir, "stdout.log"),
                                stderr_path=os.path.join(invocation_dir, "stderr.log"),
                                timeout_s=timeout_s, on_start=on_start,
                                on_stdout=on_stdout if parser else None)
         answer = parser.result(res) if parser else self.interpret(res)
+        if not answer.usage and answer.status != OK and answer.cost_usd is None:
+            # No terminal event carried usage (a time-out, a kill, a crash mid-call): the
+            # provider's own record still says what the call used (G4).
+            usage = partial_usage(self.kind, invocation_dir, started_at, env)
+            if usage:
+                answer.usage, answer.usage_source = usage, "provider-record"
         # Codex's output file is never used as a fallback for a missing terminal event.
         raw = os.path.join(invocation_dir, "final.raw")
         if os.path.lexists(raw):
@@ -385,12 +422,54 @@ class ClaudeAgent(HeadlessAgent):
             argv += ["--model", model or self.profile["model"]]
         if session_id:
             argv += ["--resume", session_id]
+        else:
+            # Chosen here so the transcript of a call that never returns can still be found (G4).
+            argv += ["--session-id", str(uuid.uuid4())]
         if read_only:
             # Disabling Edit/Write alone leaves shell and delegated writes available. Reviewers
             # get only local read/search tools and no MCP servers, then doctor verifies the boundary.
             argv += ["--tools", "Read,Glob,Grep", "--disallowedTools", "Bash,Edit,Write,NotebookEdit,Agent",
                      "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
         return argv
+
+    @staticmethod
+    def read_provider_record(invocation_dir, since, env):
+        """Sum the usage of this call's API responses from the session transcript
+        `$CLAUDE_CONFIG_DIR/projects/<cwd slug>/<session>.jsonl`. Claude writes one row per
+        content block, all carrying the response's usage, so rows are counted once per request."""
+        with open(os.path.join(invocation_dir, "argv.json"), encoding="utf-8") as fh:
+            recorded = json.load(fh)
+        argv, cwd = recorded["argv"], recorded["cwd"]
+        session = next((argv[i + 1] for i, a in enumerate(argv[:-1]) if a in ("--session-id", "--resume")), None)
+        if not session or not re.fullmatch(r"[\w-]+", session):
+            return {}
+        home = env.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+        slug = re.sub(r"[^A-Za-z0-9]", "-", os.path.abspath(cwd))
+        path = os.path.join(home, "projects", slug, session + ".jsonl")
+        if not os.path.isfile(path):
+            return {}
+        seen, counts = set(), {"tokens_in": 0, "tokens_out": 0}
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict) or row.get("type") != "assistant":
+                    continue
+                stamp = _epoch(row.get("timestamp"))
+                message = row.get("message") if isinstance(row.get("message"), dict) else {}
+                usage = message.get("usage") if isinstance(message.get("usage"), dict) else None
+                key = row.get("requestId") or message.get("id")
+                if stamp is None or stamp < since - 1 or not usage or key in seen:
+                    continue
+                seen.add(key)
+                for source, target in (("input_tokens", "tokens_in"), ("cache_creation_input_tokens", "tokens_in"),
+                                       ("cache_read_input_tokens", "tokens_in"), ("output_tokens", "tokens_out")):
+                    value = usage.get(source, 0)
+                    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                        counts[target] += value
+        return counts if seen else {}
 
     def interpret(self, res):
         failure = process_failure(res)
@@ -470,6 +549,57 @@ class CodexAgent(HeadlessAgent):
         if session_id:
             argv.append(session_id)
         return argv + ["-"]
+
+    @staticmethod
+    def read_provider_record(invocation_dir, since, env):
+        """Sum the usage of this call's responses from the rollout
+        `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<stamp>-<thread>.jsonl`, whose
+        `token_usage_record` rows carry each response's usage as it happens. The thread id is
+        the `thread.started` event streamed to stdout.log, or the resumed session in argv.json."""
+        with open(os.path.join(invocation_dir, "argv.json"), encoding="utf-8") as fh:
+            thread = json.load(fh).get("session_id")
+        if not thread:
+            try:
+                with open(os.path.join(invocation_dir, "stdout.log"), "rb") as fh:
+                    head = fh.read(65536).decode("utf-8", errors="replace")
+            except OSError:
+                head = ""
+            for line in head.splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and event.get("type") == "thread.started":
+                    thread = event.get("thread_id")
+                    break
+        if not isinstance(thread, str) or not re.fullmatch(r"[\w-]+", thread):
+            return {}
+        home = env.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+        paths = glob.glob(os.path.join(glob.escape(home), "sessions", "*", "*", "*", f"rollout-*-{thread}.jsonl"))
+        if not paths:
+            return {}
+        seen, counts = set(), {"tokens_in": 0, "tokens_out": 0, "cached_tokens_in": 0}
+        with open(sorted(paths)[-1], encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict) or row.get("type") != "token_usage_record":
+                    continue
+                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+                usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
+                stamp = _epoch(row.get("timestamp"))
+                key = payload.get("response_id") or row.get("ordinal")
+                if stamp is None or stamp < since - 1 or not usage or key in seen:
+                    continue
+                seen.add(key)
+                for source, target in (("input_tokens", "tokens_in"), ("output_tokens", "tokens_out"),
+                                       ("cached_input_tokens", "cached_tokens_in")):
+                    value = usage.get(source, 0)
+                    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                        counts[target] += value
+        return counts if seen else {}
 
     def enabled_features(self):
         """Feature names the profile switches on (`--enable NAME`, `-c features.NAME=true`)."""

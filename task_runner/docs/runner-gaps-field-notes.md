@@ -36,6 +36,7 @@ tokens: 11M tokens of reviewing is not nothing.
 | `retry --apply-patch` after a replan (twice) | The set-aside work of a replanned task could not be restored | G1 itself — on this very branch, but not yet in the runner driving the run |
 | Owner pauses: `pkill`/`pgrep` by name hit the wrong process once | A monitor killed instead of the runner | `runner pause RUN [--now]`, addressed through the run lock |
 | STATUS.md not refreshed at an interrupt | No mention of the interrupted call | The engine's final beat runs on any exit (G7) |
+| Interrupted and timed-out calls counted as "unknown usage" | Calls cut short by an outage or a pause had no tokens in the ledger | The provider's own record (Claude transcript, Codex rollout) is read for the call's tokens (G4) |
 
 Two of these (the marker and the gate re-runs) were made worse or caused by fixes landed the
 same day. A fix to the runner driving a live run takes effect at the next `resume`, never in

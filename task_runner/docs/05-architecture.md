@@ -413,9 +413,17 @@ ends. A call is not started unless its whole reservation fits. So four reviewers
 $5 call with $1 left: none starts, and the run stops as out of budget.
 
 **Honest accounting.** `STATUS.md` and `run.json` report three numbers, never one: **known spend**,
-**reserved**, and **unpriced usage** (tokens from agents that report no cost, and interrupted calls
-whose usage is unknown). Unpriced usage never counts as zero dollars against a limit, and is never
-converted into invented dollars. Codex reports usage only when a turn completes, so it offers no
+**reserved**, and **unpriced usage** (tokens from agents that report no cost, and calls that ended
+without the provider's final event). Unpriced usage never counts as zero dollars against a limit,
+and is never converted into invented dollars. A call that ended without its final event (the runner
+was stopped with `pause --now` or died, the call timed out, the agent was killed as an orphan) is
+not written off as unknown when the provider's own record says what it used: every new Claude call
+is given a session id of its own, so its transcript under `~/.claude/projects/<cwd>/` can be read;
+a Codex call's thread id is in the `thread.started` event streamed to `stdout.log`, and its rollout
+under `$CODEX_HOME/sessions/` carries a `token_usage_record` per response. Only rows stamped after
+the call began count, once per response. The tokens go to unpriced usage with `usage_source:
+provider-record` in `outcome.json`; the dollars of such a Claude call stay unknown, since only its
+final event prices it. A call whose record cannot be found is still `unknown usage` (G4). Codex reports usage only when a turn completes, so it offers no
 in-call token or money cap: a Codex call is bounded by time and attempts, and the documentation of a
 workflow that uses it must not promise a dollar ceiling. What a workflow can promise is a **stop
 line**: with `run_budget_tokens` set, no call of an unpriced agent starts once the run's unpriced

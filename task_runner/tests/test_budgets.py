@@ -100,6 +100,32 @@ class Budgets(EngineCase):
         record.reconcile(run,gitops.Git(self.root))
         self.assertEqual(run.state['spend']['unpriced']['unknown_calls'],1)
 
+    def test_interrupted_call_with_a_provider_record_is_not_unknown_usage(self):
+        """bud: the usage of an interrupted call is read from the provider's record (G4, BUD-07)"""
+        self.setup_budget(20)
+        class Killed(Exception):pass
+        def crash(point):
+            if point=='agent:running':raise Killed()
+        self.cli.CRASH=crash
+        with self.assertRaises(Killed):self.start()
+        run=self.the_run()
+        it=next(i for i in run.state['intents'] if i['kind']=='agent')
+        self.assertEqual(it['agent_kind'],'command')
+        from taskrunner import gitops
+        with patch.object(agents,'partial_usage',return_value={'tokens_in':1234,'tokens_out':56}) as reader:
+            lines=record.reconcile(run,gitops.Git(self.root),stop_orphans=True,grace_s=.1)
+        self.assertEqual(reader.call_args.args[0],'command')
+        self.assertAlmostEqual(reader.call_args.args[2],agents._epoch(it['at']))
+        unpriced=run.state['spend']['unpriced']
+        self.assertEqual((unpriced['unknown_calls'],unpriced['tokens_in'],unpriced['tokens_out']),(0,1234,56))
+        self.assertEqual(run.state['spend']['reserved_usd'],0)
+        self.assertTrue(any('it had used 1234 tokens in, 56 out' in l for l in lines),lines)
+        outcome=record.read_json(os.path.join(run.path,it['invocation_dir'],'outcome.json'))
+        self.assertEqual((outcome['status'],outcome['usage_source']),('interrupted','provider-record'))
+        self.cli.CRASH=None
+        self.assertEqual(self.resume(),0,self.output)
+        self.check_invariants()
+
     def test_unpriced_usage_is_not_invented_dollars(self):
         self.workflow(ONE.replace('reviewers=["principal-engineer", "spec-compliance"]',''))
         self.script([GOOD])

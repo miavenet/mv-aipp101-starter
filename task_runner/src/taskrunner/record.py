@@ -872,13 +872,21 @@ def _reconcile_agent(run, git, it, stop_orphans, grace_s, **_):
     outcome = os.path.join(inv, "outcome.json")
     # Completion is unknown, so it is never success: the engine had not recorded an outcome.
     os.makedirs(inv, exist_ok=True)
-    write_durable(outcome, dump_json({"status": "interrupted",
-                                      "reason": "the runner stopped while this call was running"}))
     from . import budgets, agents
-    budgets.settle(run.state, task, it.get("reservation", 0), agents.AgentResult(agents.INTERRUPTED))
+    # What the call used is read from the provider's own record when there is one (G4).
+    since = agents._epoch(it.get("at"))
+    usage = agents.partial_usage(it.get("agent_kind", ""), inv, since) if since is not None else {}
+    result = agents.AgentResult(agents.INTERRUPTED, usage=usage,
+                                usage_source="provider-record" if usage else "unknown")
+    write_durable(outcome, dump_json({"status": "interrupted",
+                                      "reason": "the runner stopped while this call was running",
+                                      "usage": usage, "usage_source": result.usage_source}))
+    budgets.settle(run.state, task, it.get("reservation", 0), result)
     run.state["tasks"][task]["session_id"] = None        # the session is abandoned
-    run.finish(it["op"], status="interrupted")
-    return f"{it['op']} agent call of '{task}': marked interrupted; its session is abandoned"
+    run.finish(it["op"], status="interrupted", usage=usage)
+    return (f"{it['op']} agent call of '{task}': marked interrupted; its session is abandoned"
+            + (f"; it had used {usage['tokens_in']} tokens in, {usage['tokens_out']} out" if usage
+               else "; its usage is unknown"))
 
 
 def _reconcile_command(run, git, it, stop_orphans, grace_s, **_):
@@ -1305,7 +1313,7 @@ FILE_NOTES = {
     "stderr.log": "The agent's standard error, streamed and redacted",
     "last-message.txt": "The agent's final message, written by this invocation",
     "schema.json": "The JSON schema the answer was asked to follow",
-    "outcome.json": "How the call ended: ok, protocol-error, agent-error, timed-out, interrupted, environment, quota",
+    "outcome.json": "How the call ended: ok, protocol-error, agent-error, timed-out, interrupted, environment, quota; usage_source: terminal, provider-record or unknown",
 }
 
 

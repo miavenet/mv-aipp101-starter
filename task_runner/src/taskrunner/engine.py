@@ -574,7 +574,7 @@ class Engine(ProviderRouting, Panels):
         self.run.state["spend"]["reserved_usd"] += reservation
         self.st(tid)["pending_protocol_tries"] = self.st(tid).get("pending_protocol_tries", 0) + 1
         record.write_durable(os.path.join(inv, "prompt.md"), prompt.encode())
-        op = self.run.begin("agent", task=tid,
+        op = self.run.begin("agent", task=tid, agent_kind=agent.kind,
                             invocation_dir=os.path.relpath(inv, self.run.path), reservation=reservation)
         guard = self.run.integrity_begin()
         startup_problems = []

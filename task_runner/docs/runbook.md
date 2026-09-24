@@ -90,7 +90,8 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
   nothing to reconcile. `--wait MIN` bounds how long the command waits (default 60); a long agent
   call can take a while to reach that point. If you cannot wait, `runner pause RUN --now` sends the
   runner SIGTERM (it is addressed through the run lock, so the right process is hit): the call in
-  flight is discarded, its spend is unknown, and `resume` reconciles and runs that attempt again.
+  flight is discarded and `resume` reconciles and runs that attempt again; what the discarded call
+  used is read from the provider's own record (its dollars, for Claude, stay unknown).
   Either way, budget can only be added on the resume: `runner resume RUN --add-budget USD`, or
   `--add-tokens N` for a run whose `run_budget_tokens` stop line was reached.
 - **Do not edit the work tree or the run branch while a run is active or paused.** `resume` will

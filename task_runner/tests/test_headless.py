@@ -85,6 +85,90 @@ class Headless(unittest.TestCase):
             self.assertEqual(len(calls), n)                     # no sandbox to check: nothing run
             self.assertEqual(agents.make("c", {"kind": "codex", "extra_args": ["-c", "features.apps=true", "--enable=apps"]}).enabled_features(), ["apps", "apps"])
 
+    def test_a_new_claude_call_names_its_own_session(self):
+        """agent: the transcript of a call that never returns can still be found (G4)"""
+        import uuid
+        a = agents.make("author", {"kind": "claude"})
+        argv = a.build_argv(self.root, validate.PRODUCE, None, "m", 1, False)
+        uuid.UUID(argv[argv.index("--session-id") + 1])
+        resumed = a.build_argv(self.root, validate.PRODUCE, "old-session", "m", 1, False)
+        self.assertNotIn("--session-id", resumed)
+        self.assertIn("--resume", resumed)
+
+    def provider_records(self):
+        """A Claude transcript and a Codex rollout under a fake home, as the CLIs write them."""
+        home = Path(self.root, "home"); cwd = Path(self.root, "work"); cwd.mkdir()
+        slug = "".join(c if c.isalnum() else "-" for c in str(cwd.resolve()))
+        transcript = home / ".claude" / "projects" / slug / "11111111-2222-4333-8444-555555555555.jsonl"
+        transcript.parent.mkdir(parents=True)
+        def claude_row(stamp, request, usage):
+            return json.dumps({"type": "assistant", "timestamp": stamp, "requestId": request,
+                               "message": {"id": "msg_" + request, "usage": usage}})
+        transcript.write_text("\n".join([
+            json.dumps({"type": "user", "timestamp": "2026-09-23T07:00:00.000Z"}),
+            claude_row("2026-09-23T06:00:00.000Z", "old", {"input_tokens": 999, "output_tokens": 999}),   # an earlier turn
+            claude_row("2026-09-23T07:00:01.000Z", "r1", {"input_tokens": 2, "cache_creation_input_tokens": 10,
+                                                        "cache_read_input_tokens": 100, "output_tokens": 7}),
+            claude_row("2026-09-23T07:00:01.000Z", "r1", {"input_tokens": 2, "cache_creation_input_tokens": 10,
+                                                        "cache_read_input_tokens": 100, "output_tokens": 7}),  # second block, same response
+            claude_row("2026-09-23T07:00:05.000Z", "r2", {"input_tokens": 3, "output_tokens": 4}),
+            "not json", json.dumps({"type": "assistant", "timestamp": "bad", "message": {"usage": {"input_tokens": 5}}}),
+        ]) + "\n")
+        rollout = home / ".codex" / "sessions" / "2026" / "09" / "23" / "rollout-2026-09-23T07-00-00-thread-abc.jsonl"
+        rollout.parent.mkdir(parents=True)
+        def codex_row(stamp, response, usage):
+            return json.dumps({"timestamp": stamp, "type": "token_usage_record",
+                               "payload": {"response_id": response, "usage": usage}})
+        rollout.write_text("\n".join([
+            json.dumps({"timestamp": "2026-09-23T07:00:00.000Z", "type": "session_meta", "payload": {}}),
+            codex_row("2026-09-23T06:00:00.000Z", "old", {"input_tokens": 999, "output_tokens": 999}),
+            codex_row("2026-09-23T07:00:02.000Z", "resp1", {"input_tokens": 1000, "cached_input_tokens": 600, "output_tokens": 50}),
+            codex_row("2026-09-23T07:00:02.000Z", "resp1", {"input_tokens": 1000, "cached_input_tokens": 600, "output_tokens": 50}),
+            codex_row("2026-09-23T07:00:09.000Z", "resp2", {"input_tokens": 1500, "cached_input_tokens": 0, "output_tokens": 60}),
+        ]) + "\n")
+        env = {"CLAUDE_CONFIG_DIR": str(home / ".claude"), "CODEX_HOME": str(home / ".codex")}
+        since = agents._epoch("2026-09-23T07:00:00Z")
+        return cwd, env, since
+
+    def test_usage_of_a_call_without_a_terminal_event_is_read_from_the_provider_record(self):
+        """agent: interrupted and timed-out calls are not "unknown usage" when the provider's record says (G4)"""
+        cwd, env, since = self.provider_records()
+        inv = Path(self.root, "inv-claude"); inv.mkdir()
+        (inv / "argv.json").write_text(json.dumps({"argv": ["claude", "-p", "--session-id", "11111111-2222-4333-8444-555555555555"],
+                                                   "cwd": str(cwd)}))
+        self.assertEqual(agents.partial_usage("claude", str(inv), since, env), {"tokens_in": 115, "tokens_out": 11})
+        self.assertEqual(agents.partial_usage("claude", str(inv), since + 3, env), {"tokens_in": 3, "tokens_out": 4})
+        (inv / "argv.json").write_text(json.dumps({"argv": ["claude", "--resume", "no-such-session"], "cwd": str(cwd)}))
+        self.assertEqual(agents.partial_usage("claude", str(inv), since, env), {})
+        inv = Path(self.root, "inv-codex"); inv.mkdir()
+        (inv / "argv.json").write_text(json.dumps({"argv": ["codex", "exec"], "cwd": str(cwd), "session_id": None}))
+        (inv / "stdout.log").write_bytes(b'{"type":"thread.started","thread_id":"thread-abc"}\n{"type":"turn.started"}\n')
+        self.assertEqual(agents.partial_usage("codex", str(inv), since, env),
+                         {"tokens_in": 2500, "tokens_out": 110, "cached_tokens_in": 600})
+        (inv / "stdout.log").write_bytes(b"")
+        self.assertEqual(agents.partial_usage("codex", str(inv), since, env), {})
+        (inv / "argv.json").write_text(json.dumps({"argv": ["codex", "exec", "resume"], "cwd": str(cwd), "session_id": "thread-abc"}))
+        self.assertEqual(agents.partial_usage("codex", str(inv), since + 5, env)["tokens_in"], 1500)
+        self.assertEqual(agents.partial_usage("command", str(inv), since, env), {})
+        self.assertEqual(agents.partial_usage("codex", str(Path(self.root, "missing")), since, env), {})
+        self.assertEqual(agents.partial_usage("codex", str(inv), None, env), {})
+
+    def test_a_timed_out_call_reports_what_the_provider_record_says(self):
+        from unittest.mock import patch
+        cwd, env, since = self.provider_records()
+        inv = Path(self.root, "inv"); inv.mkdir()
+        a = agents.make("author", {"kind": "claude"})
+        def timed_out(argv, **kw):
+            return result(status="timed-out")
+        with patch.object(proc, "run_process", timed_out), \
+             patch.object(agents, "partial_usage", return_value={"tokens_in": 9, "tokens_out": 1}) as reader:
+            answer = a.run("p", cwd=str(cwd), invocation_dir=str(inv), schema=validate.PRODUCE, session_id=None,
+                           model="m", timeout_s=1, budget_usd=1, read_only=False, env=env)
+        self.assertEqual(answer.status, agents.TIMED_OUT)
+        self.assertEqual((answer.usage, answer.usage_source), ({"tokens_in": 9, "tokens_out": 1}, "provider-record"))
+        self.assertEqual(reader.call_args.args[:2], ("claude", str(inv)))
+        self.assertEqual(json.loads(json.dumps(answer.outcome()))["usage_source"], "provider-record")
+
     def test_ignore_config_is_explicit(self):
         for kind, flag in (("codex", "--ignore-user-config"), ("claude", "--setting-sources")):
             a = agents.make(kind, {"kind": kind, "ignore_user_config": True})

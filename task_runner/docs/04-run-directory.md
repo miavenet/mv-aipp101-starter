@@ -51,7 +51,7 @@ first eight characters of its UUID, the same pair as its branch `run/<workflow>-
               stdout.log  stderr.log  streamed as they arrive, so a crash loses nothing
               last-message.txt
               schema.json
-              outcome.json            ok | protocol-error | agent-error | timed-out | interrupted | environment;
+              outcome.json            ok | protocol-error | agent-error | timed-out | interrupted | environment; usage_source terminal | provider-record | unknown (G4);
                                       the status that was used, including a rejection by the ledger check (G2)
             invocation-2/             only after a protocol retry
             result.json               the validated answer, plus cost, usage, seconds, session id

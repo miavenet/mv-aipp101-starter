@@ -22,6 +22,11 @@ class RepoCase(unittest.TestCase):
     """Each test gets an empty committed git repository in `self.root`."""
 
     def setUp(self):
+        # The suite makes scratch runs in its own repositories: an owner's `--runs-dir` (or the
+        # variable exported for it) must never redirect them into a real record.
+        previous = os.environ.pop("TASK_RUNNER_RUNS_DIR", None)
+        if previous is not None:
+            self.addCleanup(os.environ.__setitem__, "TASK_RUNNER_RUNS_DIR", previous)
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = os.path.realpath(self._tmp.name)

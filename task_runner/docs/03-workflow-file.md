@@ -144,7 +144,10 @@ that exits 1 is not the intended failure. It never complains about an invariant 
 **Files a gate executes are protected (B9).** Each gate and `run` command is split into words, and
 every word that names an existing tracked file (`tools/run_mutants.py`) joins that task's protected
 set, unless the task lists that exact path in `writes`, in which case `validate` warns that the
-task may edit a file its own verifier executes. This is a floor, not a fence: an author who
+task may edit a file its own verifier executes. Because the words are matched against the tree,
+a gate that names a producer's own output (behind a glob in `writes`) protects it only once the
+output exists; `replan` therefore leaves these derived entries out when it compares an accepted
+task's definition with the revised one. This is a floor, not a fence: an author who
 legitimately owns a build file (`CMakeLists.txt`) can still weaken the build. The defences for that
 are a `new` gate with a `fail_pattern`, tests frozen by an earlier task, and the reviewers, who see
 the build file in the diff.

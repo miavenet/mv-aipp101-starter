@@ -1,6 +1,7 @@
 """Freeze a revised plan, revert reopened work, then install it as one resumable operation."""
 import copy
 import hashlib
+import shlex
 import os
 from pathlib import Path
 import shutil
@@ -12,9 +13,31 @@ class Refused(ValueError):
     pass
 
 
+def _executed_files(task, expanded):
+    """Words of the commands that guard `task`: its own gates or run, and the run of every check that
+    verifies it. The expansion adds those words to `protected` when they name a tracked file (B9), so
+    the set depends on the tree: a gate that names a producer's own output protects it only once the
+    output exists. Comparing definitions must ignore that, or an accepted task 'changes' by its own
+    work at the first replan after it."""
+    commands = [g['run'] for g in task.get('gates', [])] + list(task.get('run') or [])
+    for other in expanded['tasks']:
+        if other.get('kind') == 'check' and other.get('verifies') == task['id']:
+            commands += list(other.get('run') or [])
+    words = set()
+    for cmd in commands:
+        try:
+            words |= {os.path.normpath(w).replace(os.sep, '/') for w in shlex.split(cmd)}
+        except ValueError:
+            continue
+    return words
+
+
 def _definition(task, directory):
     value = {k: v for k, v in task.items() if k not in ('order', 'prompt_file')}
     root = Path(directory)
+    expanded = record.read_json(root / 'workflow.expanded.json')
+    executed = _executed_files(task, expanded)
+    value['protected'] = [p for p in task.get('protected', []) if p not in executed]
     files = [root / 'library' / 'types' / (task['type'] + '.toml')]
     if task.get('perspective'):
         files.append(root / 'library' / 'personas' / (task['perspective'] + '.toml'))
@@ -22,7 +45,6 @@ def _definition(task, directory):
         files.append(root / 'briefs' / (task['id'] + '.md'))
     value['frozen_contents'] = [hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else None
                                 for p in files]
-    expanded = record.read_json(root / 'workflow.expanded.json')
     if task.get('agent'):
         value['agent_profile'] = expanded['agents'].get(task['agent'])
         if task.get('fallback_agents'):

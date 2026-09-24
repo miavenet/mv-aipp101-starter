@@ -145,6 +145,16 @@ class Replan(EngineCase):
         self.assertEqual(self.status('a'),'accepted')
         self.assertEqual(len(self.the_run().state['intents']),1)
 
+    def test_a_gate_naming_the_tasks_own_output_does_not_change_its_definition(self):
+        # The gate names src/a.txt, an output behind a glob in writes. Once accepted, the file is
+        # tracked and the expansion protects it for the task (B9); that must not read as a change
+        # to accepted work at the next replan.
+        glob=A.replace('outputs=["a.txt"]','outputs=["src/a.txt"]\nwrites=["src/**"]').replace('test -s a.txt','test -s src/a.txt')
+        self.workflow(glob);self.script([writes('src/a.txt')]);self.assertEqual(self.start(),0,self.output)
+        self.assertEqual(self.replan(self.revised(glob+H)),0,self.output)
+        self.assertNotIn('--reopen',self.output)
+        self.assertEqual(self.status('a'),'accepted')
+
     def test_changed_agent_profile_requires_reopen_of_accepted_work(self):
         self.workflow(A);self.script([writes('a.txt')]);self.assertEqual(self.start(),0,self.output)
         path=Path(self.revised(A));path.write_text(path.read_text().replace('[agents.fake]', '[agents.fake]\nmodel="changed-profile"'))

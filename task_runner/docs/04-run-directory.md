@@ -25,7 +25,8 @@ first eight characters of its UUID, the same pair as its branch `run/<workflow>-
     book-module-20260919T201500Z-1a2b3c4d/   <workflow>-<UTC start>-<first 8 of the run UUID>
       run.json                        identity and totals
       STATUS.md                       the run in words. Regenerated on every state change; while a runner works,
-                                      a heartbeat also refreshes its "In flight" section about every 30 s
+                                      a heartbeat also refreshes its "In flight" section about every 30 s,
+                                      with each call's age and the tokens the provider's record shows so far (G4)
       index.json                      what every file and directory here is
       state.json                      the engine's state. The single source of truth
       events.jsonl                    append-only log, one event per line

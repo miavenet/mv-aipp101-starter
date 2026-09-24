@@ -423,7 +423,10 @@ a Codex call's thread id is in the `thread.started` event streamed to `stdout.lo
 under `$CODEX_HOME/sessions/` carries a `token_usage_record` per response. Only rows stamped after
 the call began count, once per response. The tokens go to unpriced usage with `usage_source:
 provider-record` in `outcome.json`; the dollars of such a Claude call stay unknown, since only its
-final event prices it. A call whose record cannot be found is still `unknown usage` (G4). Codex reports usage only when a turn completes, so it offers no
+final event prices it. A call whose record cannot be found is still `unknown usage` (G4). The same
+record feeds the heartbeat: while a call runs, its "In flight" line in `STATUS.md` shows the tokens
+used so far. It is a readout of the provider's record, not a cost: the runner has no price sheet,
+cache reads and writes are priced differently per model, and a subscription bills no tokens at all. Codex reports usage only when a turn completes, so it offers no
 in-call token or money cap: a Codex call is bounded by time and attempts, and the documentation of a
 workflow that uses it must not promise a dollar ceiling. What a workflow can promise is a **stop
 line**: with `run_budget_tokens` set, no call of an unpriced agent starts once the run's unpriced

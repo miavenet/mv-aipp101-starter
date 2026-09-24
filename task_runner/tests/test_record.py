@@ -113,6 +113,28 @@ class Heartbeat(RunCase):
         self.run_.regenerate()
         self.assertNotIn("## In flight", self.status())
 
+    def test_in_flight_calls_show_the_tokens_used_so_far(self):
+        """rec: the heartbeat reads the provider's record for what a running call has used (G4)"""
+        import datetime
+        from unittest.mock import patch
+        from taskrunner import agents
+        self.run_.state["status"] = "running"
+        now = datetime.datetime.now(datetime.timezone.utc)
+        op = self.run_.begin("agent", task="design", invocation_dir="tasks/010-design/attempt-1/invocation-1")
+        self.assertTrue(self.run_.refresh_status(now=now))
+        self.assertNotIn("so far", self.status())                     # no agent kind: no record to read
+        self.run_.finish(op, status="ok")
+        self.run_.begin("agent", task="design", agent_kind="claude",
+                        invocation_dir="tasks/010-design/attempt-1/invocation-2")
+        with patch.object(agents, "partial_usage", return_value={"tokens_in": 48000, "tokens_out": 2000}) as reader:
+            self.assertTrue(self.run_.refresh_status(now=now))
+        self.assertIn("48000 tokens in and 2000 out so far (the provider's record; unpriced)", self.status())
+        self.assertEqual(reader.call_args.args[:2],
+                         ("claude", os.path.join(self.run_.path, "tasks/010-design/attempt-1/invocation-2")))
+        with patch.object(agents, "partial_usage", return_value={}):
+            self.assertTrue(self.run_.refresh_status(now=now))
+        self.assertNotIn("so far", self.status())
+
     def test_a_beat_never_raises(self):
         self.run_.state["status"] = "running"
         self.run_.state["intents"].append({"op": "x", "kind": "agent", "at": "not a time"})

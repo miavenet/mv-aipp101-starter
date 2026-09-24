@@ -967,8 +967,10 @@ def branch_disposition(info, state):
             "pushed": contains("refs/remotes/" + upstream) if merged and upstream else None}
 
 
-def _in_flight(state, now):
-    """One line per agent call or command that has begun and not finished."""
+def _in_flight(state, now, run_path=None):
+    """One line per agent call or command that has begun and not finished. With `run_path`, an
+    agent call's line also says what the provider's own record shows it has used so far (G4):
+    tokens, never dollars, and nothing when no record can be read."""
     lines = []
     for it in state["intents"]:
         if it.get("kind") not in ("agent", "command"):
@@ -982,6 +984,13 @@ def _in_flight(state, now):
                     tzinfo=datetime.timezone.utc)
                 secs = max(0, int((now - began).total_seconds()))
                 line += f", running for {secs // 60} min {secs % 60:02d} s"
+        if run_path and it["kind"] == "agent" and it.get("invocation_dir") and it.get("agent_kind"):
+            from . import agents
+            usage = agents.partial_usage(it["agent_kind"], os.path.join(run_path, it["invocation_dir"]),
+                                         agents._epoch(it.get("at")))
+            if usage:
+                line += (f", {usage.get('tokens_in', 0)} tokens in and {usage.get('tokens_out', 0)} out "
+                         "so far (the provider's record; unpriced)")
         if it.get("invocation_dir"):
             line += f". Log: `{it['invocation_dir']}/`"
         lines.append(line)
@@ -1101,7 +1110,7 @@ def render_run_status(info, state, disposition=None, now=None, run_path=None):
             if selection:
                 lines.append(f"- **{tid}**: {selection['profile']} / {selection['model'] or 'provider default'} "
                              f"({selection['complexity']}; {selection['reason']}).")
-    flying = _in_flight(state, now) if state["status"] == "running" else []
+    flying = _in_flight(state, now, run_path) if state["status"] == "running" else []
     if flying:
         lines += ["", "## In flight"]
         if now is not None:

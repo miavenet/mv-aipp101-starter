@@ -41,6 +41,7 @@ BUILTIN_DEFAULTS = {
     "gate_timeout_min": 20,
     "budget_usd": 5.0,
     "run_budget_usd": 50.0,
+    "run_budget_tokens": 0,
     "max_parallel": 4,
     "recheck_passed": "diff",
     "branch": "run",
@@ -56,7 +57,8 @@ STR, BOOL, INT, NUM, STRLIST, TABLE, ANY = "string", "boolean", "integer", "numb
 
 DEFAULTS_KEYS = {
     "agent": STR, "model": STR, "max_attempts": INT, "timeout_min": NUM, "gate_timeout_min": NUM,
-    "budget_usd": NUM, "run_budget_usd": NUM, "max_parallel": INT, "recheck_passed": STR,
+    "budget_usd": NUM, "run_budget_usd": NUM, "run_budget_tokens": INT, "max_parallel": INT,
+    "recheck_passed": STR,
     "branch": STR, "commit_trailer": STR, "protected": STRLIST, "diff_cap_bytes": INT,
     "inputs_cap_bytes": INT, "findings_cap_bytes": INT, "complexity": STR,
 }
@@ -247,6 +249,8 @@ class _Loader:
         for key in ("max_attempts", "max_parallel"):
             if defaults[key] < 1:
                 self.err(f"{label} [defaults]: '{key}' must be at least 1")
+        if defaults["run_budget_tokens"] < 0:
+            self.err(f"{label} [defaults]: 'run_budget_tokens' must be 0 (no cap) or more")
         wf.defaults = defaults
 
         wf.model_policy = self.check_keys(top.get('model_policy', {}),
@@ -281,8 +285,11 @@ class _Loader:
         for name in used_agents:
             profile = wf.agents.get(name, {})
             if profile.get("kind", name) in ("command", "codex"):
+                cap = wf.defaults["run_budget_tokens"]
                 self.warn(f"agent '{name}' reports no dollar cost: dollar limits do not bind on it; "
-                          "time and attempts still apply, and usage is recorded as unpriced")
+                          "time and attempts still apply, and usage is recorded as unpriced"
+                          + (f"; run_budget_tokens stops the run once {cap} tokens were used"
+                             if cap else "; set run_budget_tokens to cap its usage"))
         wf.tasks = self.order(tasks, has_cycle)
         for n, t in enumerate(wf.tasks):
             t["order"] = n

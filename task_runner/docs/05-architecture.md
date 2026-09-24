@@ -401,6 +401,7 @@ and `resume` checks them first.
 | `gate_timeout_min` per command | 20 | runner's clock |
 | `budget_usd` per agent call | 5 | the agent, where it can |
 | `run_budget_usd` | 50 | engine, **by reservation** (A11) |
+| `run_budget_tokens` | 0 (no cap) | engine, as a **stop line** on unpriced usage: no call of an agent that reports no cost starts once the run's unpriced tokens (in plus out) reached it |
 | `max_parallel` readers | 4 | scheduler |
 | One run at a time per repository | | a lock in `.runs/` holding run id, process group and start time |
 
@@ -414,7 +415,12 @@ $5 call with $1 left: none starts, and the run stops as out of budget.
 whose usage is unknown). Unpriced usage never counts as zero dollars against a limit, and is never
 converted into invented dollars. Codex reports usage only when a turn completes, so it offers no
 in-call token or money cap: a Codex call is bounded by time and attempts, and the documentation of a
-workflow that uses it must not promise a dollar ceiling.
+workflow that uses it must not promise a dollar ceiling. What a workflow can promise is a **stop
+line**: with `run_budget_tokens` set, no call of an unpriced agent starts once the run's unpriced
+tokens (in plus out, doctor's probes included) reached it. The call that crosses the line completes,
+so the overshoot is at most one call. The stop is a budget stop like the dollar one: `stopped`,
+exit 2, the tree held, `resume --add-tokens N` raises the line and is an event. Interrupted calls
+have unknown usage and do not count towards it.
 
 ## Command line
 
@@ -424,9 +430,10 @@ runner graph WORKFLOW [-o FILE]       write the DAG as Graphviz DOT
 runner doctor WORKFLOW [--force]      qualify each agent, model and profile per capability; refuse a workflow that needs more
 runner check-gates WORKFLOW           run every gate and check on the untouched tree and report pass, fail or error for each
 runner start WORKFLOW                 create a run and execute it
-runner resume [RUN] [--stop-orphans] [--add-budget USD]
+runner resume [RUN] [--stop-orphans] [--add-budget USD] [--add-tokens N]
                                       reconcile, then continue a run (default: the latest unfinished one).
-                                      --add-budget raises the run budget and is recorded as an event (B10)
+                                      --add-budget raises the run budget and is recorded as an event (B10);
+                                      --add-tokens raises run_budget_tokens the same way (refused when the run has no cap)
 runner status [RUN] [--rebuild]       print STATUS.md; --rebuild regenerates all derived files
 runner runs WORKFLOW                  list runs with status, cost and date
 runner approve RUN TASK [-m NOTE]     a person approves a human task

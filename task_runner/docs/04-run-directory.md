@@ -149,7 +149,7 @@ first eight characters of its UUID, the same pair as its branch `run/<workflow>-
 
 `status` is one of `running`, `done`, `failed`, `needs_human`, `stopped`.
 
-The identity fields are written once at `start`. `status`, `spend`, `seconds` and `run_budget_usd` are **copied in
+The identity fields are written once at `start`. `status`, `spend`, `seconds`, `run_budget_usd` and `run_budget_tokens` are **copied in
 from `state.json`** whenever the derived files are regenerated, so rule 1 holds: the engine never
 reads them back. `run.json` also records `name`, `git_toplevel`, `library` and `branch_mode`.
 Task order numbers step by 10 for tasks written in the workflow; generated panel members take the

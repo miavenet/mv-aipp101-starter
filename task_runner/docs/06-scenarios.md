@@ -297,6 +297,7 @@ Each test kills the runner at an injected point, then runs `resume`.
 | BUD-03 | a Codex call completes, and another is interrupted | `run.json` and STATUS.md show known spend, reserved spend and unpriced usage separately; the interrupted call counts as unknown, not as zero | `bud: honest accounting` |
 | BUD-04 | a workflow uses an agent that reports no cost | `validate` says that the dollar limits do not bind on it and that time and attempts do | `bud: no promise that cannot be kept` |
 | BUD-05 | a run stopped for budget with a producer active; `resume --add-budget 20` is run **(B10)** | the expected tree is checked, the budget is raised and the change is an event in the log, and the transaction continues from the step it stopped at | `bud: a budget stop is a pause` |
+| BUD-06 | `run_budget_tokens` is set and the unpriced usage reached it while a review is next | no call of an unpriced agent starts; the run stops as a budget stop with the usage and the cap in the reason, STATUS.md says `resume --add-tokens N`, and `resume --add-tokens` raises the cap as an event; without a cap `--add-tokens` is refused | `bud: a token cap for agents that report no cost` |
 
 ## Prompt assembly (PRM) — all (B11)
 

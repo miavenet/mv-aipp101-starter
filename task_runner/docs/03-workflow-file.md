@@ -22,6 +22,7 @@ timeout_min = 30
 gate_timeout_min = 20
 budget_usd = 5.0
 run_budget_usd = 50.0
+run_budget_tokens = 0            # stop line for agents that report no cost (Codex, command): 0 = no cap
 max_parallel = 4
 recheck_passed = "diff"         # after rework, reviewers who passed see the rework diff: "diff" | "never"
 branch = "run"                  # "run": a branch per run. "current": commit on the checked-out branch

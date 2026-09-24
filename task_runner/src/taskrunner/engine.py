@@ -179,7 +179,7 @@ class Engine(ProviderRouting, Panels):
             self.remember_tree()
             self.save()
             self.run.event("budget-stop", reason=str(stop))
-            self.say(f"runner: {stop}. Continue with runner resume --add-budget USD")
+            self.say(f"runner: {stop}. Continue with runner resume {stop.hint}")
             return EXIT_FAILED
         except EngineStop as stop:
             state["status"] = "failed"
@@ -563,6 +563,8 @@ class Engine(ProviderRouting, Panels):
         reservation = budgets.cap_for(agent, task)
         if not budgets.fits(self.run.state, reservation):
             raise budgets.Exhausted(f"budget cannot cover the next call of '{tid}' (${reservation:g})")
+        if not budgets.fits_tokens(self.run.state, agent):
+            raise budgets.token_stop(self.run.state, f"the next call of '{tid}'")
         _n, inv = self.run.new_invocation(adir)
         self.run.state["spend"]["reserved_usd"] += reservation
         self.st(tid)["pending_protocol_tries"] = self.st(tid).get("pending_protocol_tries", 0) + 1

@@ -91,7 +91,8 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
   call can take a while to reach that point. If you cannot wait, `runner pause RUN --now` sends the
   runner SIGTERM (it is addressed through the run lock, so the right process is hit): the call in
   flight is discarded, its spend is unknown, and `resume` reconciles and runs that attempt again.
-  Either way, budget can only be added on the resume: `runner resume RUN --add-budget USD`.
+  Either way, budget can only be added on the resume: `runner resume RUN --add-budget USD`, or
+  `--add-tokens N` for a run whose `run_budget_tokens` stop line was reached.
 - **Do not edit the work tree or the run branch while a run is active or paused.** `resume` will
   refuse to continue if you did.
 
@@ -106,6 +107,7 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
 | TASK is blocked: the reviewers could not answer in the required form | Nobody judged the work. Read the rejected answers in `tasks/NNN-task/STATUS.md`, then run the exact `runner retry RUN TASK …` command the **run's** `<run>/STATUS.md` "Next" section prints — `--apply-patch` when there is set-aside work to put back, plain `retry` when the attempt changed nothing. Then `resume` |
 | TASK is blocked: one reviewer could not answer in the required form and another did not finish | One reviewer's answers were rejected and are summarised in `tasks/NNN-task/STATUS.md`; the other's own cause (a timeout, an error, an interruption) is named beside it. Read both, then run the exact `runner retry RUN TASK …` command the **run's** `<run>/STATUS.md` "Next" section prints — `--apply-patch` when there is set-aside work to put back, plain `retry` otherwise. Then `resume` |
 | stopped: out of budget | `runner resume RUN --add-budget 20` |
+| stopped: the token cap for agents that report no cost is used up | `runner resume RUN --add-tokens 2000000`. STATUS.md's spend line shows the usage against the cap |
 
 ## 4. Failures — to verify at stages 2 and 3
 

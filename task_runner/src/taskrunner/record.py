@@ -461,7 +461,8 @@ class Run:
             "spend": {"known_usd": 0.0, "reserved_usd": 0.0,
                       "unpriced": {"calls": 0, "tokens_in": 0, "tokens_out": 0,
                                    "unknown_calls": 0}},
-            "run_budget_usd": wf.defaults["run_budget_usd"], "seconds": 0,
+            "run_budget_usd": wf.defaults["run_budget_usd"],
+            "run_budget_tokens": wf.defaults["run_budget_tokens"], "seconds": 0,
             "tasks": {t["id"]: {"status": "pending", "dir": names[t["id"]], "kind": t["kind"],
                                 "type": t["type"], "attempts": 0, "cost_usd": 0.0,
                                 "commit": None, "reason": ""} for t in wf.tasks},
@@ -701,7 +702,8 @@ class Run:
         info = self.info
         # run.json: the identity never changes; the totals are copied from the state.
         info.update(status=self.state["status"], spend=self.state["spend"],
-                    seconds=self.state["seconds"], run_budget_usd=self.state["run_budget_usd"])
+                    seconds=self.state["seconds"], run_budget_usd=self.state["run_budget_usd"],
+                    run_budget_tokens=self.state.get("run_budget_tokens", 0))
         self._write(os.path.join(self.path, "run.json"), dump_json(info).decode("utf-8"))
         with self._status_lock:
             self._write(os.path.join(self.path, "STATUS.md"),
@@ -1056,8 +1058,9 @@ def render_run_status(info, state, disposition=None, now=None, run_path=None):
              f"Spend: {_money(spend['known_usd'])} known of {_money(state['run_budget_usd'])}, "
              f"{_money(spend['reserved_usd'])} reserved"
              + (f", plus {unpriced['calls']} unpriced calls ({unpriced['tokens_in']} tokens in, "
-                f"{unpriced['tokens_out']} out; {unpriced['unknown_calls']} with unknown usage)"
-                if unpriced["calls"] or unpriced["unknown_calls"] else "") + ".", "",
+                f"{unpriced['tokens_out']} out; {unpriced['unknown_calls']} with unknown usage"
+                + (f"; cap {state['run_budget_tokens']} tokens" if state.get("run_budget_tokens") else "")
+                + ")" if unpriced["calls"] or unpriced["unknown_calls"] else "") + ".", "",
              "| # | Task | Type | Status | Attempts | Cost | Commit |", "|---|---|---|---|---|---|---|"]
     attention = []
     for task_id in state["order"]:
@@ -1151,9 +1154,11 @@ def render_run_status(info, state, disposition=None, now=None, run_path=None):
             for finding in t.get("ledger", {}).get("findings", []):
                 if finding["status"] == "escalated":
                     lines.append(f"    runner resolve {info['name']} {finding['id']} --as resolved|advisory|upheld")
+        reason = str(state.get("stop_reason", ""))
         lines.append(f"    runner resume {info['name']}"
-                     + (" --add-budget USD" if state["status"] == "stopped"
-                        and not str(state.get("stop_reason", "")).startswith("paused") else ""))
+                     + ("" if state["status"] != "stopped" or reason.startswith("paused")
+                        else " --add-tokens N" if reason.startswith("the token cap")
+                        else " --add-budget USD"))
     return "\n".join(lines) + "\n"
 
 

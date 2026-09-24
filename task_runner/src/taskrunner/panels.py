@@ -231,17 +231,24 @@ class Panels:
                 break
             batch = []
             available = self.run.state['run_budget_usd'] - self.run.state['spend']['known_usd']
+            out_of_tokens = False
             for job in pending:
                 amount = 0
                 if job['kind']=='review':
                     t=self.provider_task(self.tasks[job['task']])
-                    amount=budgets.cap_for(agents.make(t['agent'],self.wf['agents'][t['agent']]),t)
+                    agent=agents.make(t['agent'],self.wf['agents'][t['agent']])
+                    amount=budgets.cap_for(agent,t)
                     if available <= 0 or amount > available + 1e-9:
+                        break
+                    if not budgets.fits_tokens(self.run.state, agent):
+                        out_of_tokens = True
                         break
                 batch.append(job); available -= amount
                 if len(batch) == self.defaults['max_parallel']:
                     break
             if not batch:
+                if out_of_tokens:
+                    raise budgets.token_stop(self.run.state, f"the next review call of '{tid}'")
                 raise budgets.Exhausted('budget cannot cover the next panel call')
             self.pause_point(f"the next review batch of '{tid}'")
             try:

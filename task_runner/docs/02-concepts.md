@@ -360,7 +360,9 @@ is refused for any other task and says which task the run is waiting on (B7).
 **Running out of budget is a pause, not a failure (B10).** No new call starts, calls in flight
 finish, and the run stops as `stopped` with exit 2. If a producer is active, its transaction stays
 open and the expected tree is recorded, exactly as for a human pause. `resume --add-budget USD`
-raises the run budget, is recorded as an event, and the run continues where it stopped.
+raises the run budget, is recorded as an event, and the run continues where it stopped. Agents
+that report no cost (Codex, a command) never touch the dollar budget; `run_budget_tokens` gives
+them a stop line on tokens instead, with the same stop and `resume --add-tokens N`.
 
 ## Runs (D11, D12, D13)
 - `start` makes a run: a UUID, a directory, a branch `run/<workflow>-<uuid8>` **which it checks

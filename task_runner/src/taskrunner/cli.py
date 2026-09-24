@@ -94,6 +94,8 @@ def _main(argv=None):
                    "left running, instead of refusing to continue beside it")
     p.add_argument("-C", dest="where", default=".", metavar="DIR")
     p.add_argument("--add-budget", type=float, default=0, metavar="USD")
+    p.add_argument("--add-tokens", type=int, default=0, metavar="N", help="raise the run's token "
+                   "cap for agents that report no cost (run_budget_tokens)")
     p.set_defaults(func=cmd_resume)
 
     p = sub.add_parser("pause", help="stop a running run at the next safe point (before its next "
@@ -496,6 +498,8 @@ def cmd_pause(args):
 def cmd_resume(args):
     if not math.isfinite(args.add_budget) or args.add_budget < 0:
         return fail("--add-budget must be a finite nonnegative amount")
+    if args.add_tokens < 0:
+        return fail("--add-tokens must be a nonnegative number of tokens")
     try:
         run, git, lock = _open_run(args, unfinished_only=True)
     except (record.RecordError, gitops.GitError) as exc:
@@ -524,6 +528,14 @@ def cmd_resume(args):
             run.state["run_budget_usd"] += args.add_budget
             run.save()
             run.event("budget-added", amount_usd=args.add_budget, budget_usd=run.state["run_budget_usd"])
+        if args.add_tokens:
+            if not run.state.get("run_budget_tokens"):
+                return fail("this run has no token cap (run_budget_tokens is 0 in its workflow), "
+                            "so there is nothing to add to")
+            run.state["run_budget_tokens"] += args.add_tokens
+            run.save()
+            run.event("budget-added", amount_tokens=args.add_tokens,
+                      budget_tokens=run.state["run_budget_tokens"])
         if any(st["kind"] in ("produce", "review") for st in run.state["tasks"].values()):
             frozen = record.read_json(os.path.join(run.path, "workflow.expanded.json"))
             wf = SimpleNamespace(root=frozen["paths"]["root"], tasks=frozen["tasks"], agents=frozen["agents"])

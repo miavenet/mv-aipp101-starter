@@ -119,3 +119,86 @@ class Budgets(EngineCase):
         for amount in ('nan','inf','-1','0'):
             self.workflow(ONE,defaults=f'run_budget_usd={amount}')
             self.assertTrue(any('finite and greater than zero' in e for e in workflow.load(self.wf_path).errors))
+
+
+class Metered(agents.CommandAgent):
+    """Reports no dollar cost, like Codex, but reports usage: 1000 tokens in and 100 out per call."""
+
+    def interpret(self, res):
+        result=super().interpret(res)
+        result.usage={'tokens_in':1000,'tokens_out':100}
+        return result
+
+
+class TokenCap(EngineCase):
+    HEADER = EngineCase.HEADER + 'read_only_args = ["--read-only"]\n'
+
+    PROBES = 8 * 1100   # doctor's qualification probes are charged to the run too (BUD-03)
+
+    def setup_cap(self, cap, tasks=ONE):
+        self.workflow(tasks,defaults=f'run_budget_tokens={cap + self.PROBES}')
+        reviewers=[t['id'] for t in workflow.load(self.wf_path).tasks if t['kind']=='review']
+        self.script({'make':[GOOD],**{rid:[PASS] for rid in reviewers}})
+        self.addCleanup(agents.REGISTRY.__setitem__,'command',agents.CommandAgent)
+        agents.REGISTRY['command']=Metered
+        return reviewers
+
+    def used(self):
+        unpriced=self.the_run().state['spend']['unpriced']
+        return unpriced['tokens_in']+unpriced['tokens_out']
+
+    def test_token_cap_stops_before_the_next_call_and_resume_adds_tokens(self):
+        """bud: a token cap for agents that report no cost (BUD-06)"""
+        a,b=self.setup_cap(1000)
+        self.assertEqual(self.start(),2,self.output)                 # the producer's call crossed the line
+        run=self.the_run()
+        self.assertEqual(run.state['status'],'stopped')
+        self.assertTrue(run.state['stop_reason'].startswith('the token cap'),run.state['stop_reason'])
+        self.assertIn(f'{1100 + self.PROBES} of {1000 + self.PROBES} tokens',self.output)
+        self.assertIn('runner resume --add-tokens N',self.output)
+        self.assertEqual(self.status(a),'pending')
+        self.assertEqual(self.status(b),'pending')
+        self.assertEqual(run.state['spend']['known_usd'],0)          # no invented dollars
+        with open(os.path.join(run.path,'STATUS.md')) as fh:
+            status=fh.read()
+        self.assertIn(f'cap {1000 + self.PROBES} tokens',status)
+        self.assertIn('--add-tokens N',status)
+        self.assertNotIn('--add-budget',status)
+        self.check_invariants()
+        self.assertEqual(self.resume(),2,self.output)                # nothing added: stops again at once
+        self.assertEqual(self.resume('--add-tokens','5000'),0,self.output)
+        self.assertEqual(self.the_run().state['run_budget_tokens'],6000 + self.PROBES)
+        self.assertEqual(self.status('make'),'accepted')
+        with open(os.path.join(run.path,'events.jsonl')) as fh:
+            events=[json.loads(l) for l in fh if l.strip()]
+        added=[e for e in events if e['event']=='budget-added']
+        self.assertEqual(added[0]['amount_tokens'],5000)
+        self.assertEqual(added[0]['budget_tokens'],6000 + self.PROBES)
+        self.assertEqual(self.the_run().state['spend']['known_usd'],0)
+        self.check_invariants()
+
+    def test_the_cap_is_a_stop_line_reviews_that_fit_start_together(self):
+        a,b=self.setup_cap(1500)
+        self.assertEqual(self.start(),0,self.output)                 # 1100 < 1500 when the batch starts
+        self.assertEqual(self.used(),3300 + self.PROBES)
+        self.assertEqual(self.status('make'),'accepted')
+
+    def test_no_cap_means_no_stop_and_nothing_to_add_to(self):
+        self.setup_cap(-self.PROBES, ONE + '[[task]]\nid="look"\ntype="human"\nverifies="make"\n')
+        self.assertEqual(self.start(),255,self.output)               # run_budget_tokens = 0: waits on the person
+        self.assertEqual(self.used(),3300 + self.PROBES)
+        self.assertEqual(self.resume('--add-tokens','5'),2)
+        self.assertIn('no token cap',self.output)
+        self.assertEqual(self.resume('--add-tokens','-1'),2)
+
+    def test_validate_checks_the_cap_and_names_it_in_the_warning(self):
+        self.workflow(ONE,defaults='run_budget_tokens=-1')
+        self.assertTrue(any("'run_budget_tokens' must be 0 (no cap) or more" in e
+                            for e in workflow.load(self.wf_path).errors))
+        self.workflow(ONE,defaults='run_budget_tokens=2.5')
+        self.assertTrue(any("'run_budget_tokens' must be" in e for e in workflow.load(self.wf_path).errors))
+        self.workflow(ONE,defaults='run_budget_tokens=200000')
+        warnings=workflow.load(self.wf_path).warnings
+        self.assertTrue(any('stops the run once 200000 tokens' in w for w in warnings),warnings)
+        self.workflow(ONE)
+        self.assertTrue(any('set run_budget_tokens to cap' in w for w in workflow.load(self.wf_path).warnings))

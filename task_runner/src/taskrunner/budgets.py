@@ -7,11 +7,42 @@ class Paused(Exception):
 
 
 class Exhausted(Exception):
-    pass
+    """No call may start: the dollar budget (`hint` --add-budget) or, for agents that report no
+    cost, the token cap (`hint` --add-tokens) is used up."""
+
+    def __init__(self, message, hint="--add-budget USD"):
+        super().__init__(message)
+        self.hint = hint
 
 
 def cap_for(agent, task):
     return float(task['budget_usd']) if agent.reports_cost else 0.0
+
+
+def tokens_used(state):
+    unpriced = state['spend']['unpriced']
+    return unpriced['tokens_in'] + unpriced['tokens_out']
+
+
+def token_cap(state):
+    """0 means no cap: runs recorded before the cap existed have none."""
+    return int(state.get('run_budget_tokens', 0) or 0)
+
+
+def fits_tokens(state, agent):
+    """An agent that reports no dollar cost may start a call only while the run's unpriced usage
+    is under `run_budget_tokens`. Usage arrives when a call ends, so the cap is a stop line, not a
+    ceiling: the call that crosses it completes. Interrupted calls have unknown usage and are not
+    counted."""
+    if agent.reports_cost or not token_cap(state):
+        return True
+    return tokens_used(state) < token_cap(state)
+
+
+def token_stop(state, what):
+    return Exhausted(f"the token cap for agents that report no cost is used up "
+                     f"({tokens_used(state)} of {token_cap(state)} tokens) before {what}",
+                     hint="--add-tokens N")
 
 
 def fits(state, amount):

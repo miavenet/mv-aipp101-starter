@@ -233,6 +233,9 @@ Default Codex read-only mode failed on this host's bwrap namespace restriction. 
 explicit `--enable use_legacy_landlock` reviewer profile (installed CLI marks it
 deprecated) qualified for answer/read/resume/boundary; the sentinel write was denied.
 This host-specific profile requires requalification when the CLI or environment changes.
+(Verified again 2026-09-23 on codex-cli 0.155.1: without the flag `codex sandbox -- true`
+fails with the bwrap message; with it the sandbox starts and denies writes. `doctor` now
+checks this for free and notes the deprecation, see provider-routing.md.)
 
 A first replan correctly refused to alter accepted contracts: the newer main runner
 resolved newer default review templates. Pinning the existing worktree library explicitly

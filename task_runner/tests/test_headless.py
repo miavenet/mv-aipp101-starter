@@ -49,6 +49,42 @@ class Headless(unittest.TestCase):
             for forbidden in ("--last", "--skip-git-repo-check", "--sandbox", "--dangerously-bypass-approvals-and-sandbox"):
                 self.assertNotIn(forbidden, argv)
 
+    def test_codex_preflight_is_free_and_names_the_sandbox_and_deprecated_features(self):
+        """agent: the Codex profile is checked before any model call (PRE-09)"""
+        from unittest.mock import patch
+        import subprocess
+        calls = []
+        FEATURES = b"apps          stable      true\nuse_legacy_landlock     deprecated   false\nold_thing  removed  false\n"
+        BWRAP = b"bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces.\n"
+        def fake_run(argv, **kw):
+            calls.append(argv)
+            if argv[1:3] == ["features", "list"]:
+                return subprocess.CompletedProcess(argv, 0, FEATURES, b"")
+            if argv[1] == "sandbox":
+                ok = "--enable" in argv
+                return subprocess.CompletedProcess(argv, 0 if ok else 1, b"", b"" if ok else BWRAP)
+            raise AssertionError(argv)
+        with patch.object(agents.subprocess, "run", fake_run):
+            plain = agents.make("plain", {"kind": "codex"})
+            notes, error = plain.preflight(self.root, {}, True)
+            self.assertEqual(notes, [])
+            self.assertIn("the Codex sandbox cannot start on this host: bwrap: No permissions", error)
+            self.assertEqual(calls[-1][:2], ["codex", "sandbox"])
+            self.assertEqual(calls[-1][-2:], ["--", "true"])
+            legacy = agents.make("astra", {"kind": "codex", "extra_args": ["--enable", "use_legacy_landlock", "-c", 'x="y"']})
+            self.assertEqual(legacy.enabled_features(), ["use_legacy_landlock"])
+            notes, error = legacy.preflight(self.root, {}, True)
+            self.assertEqual(error, "")
+            self.assertEqual(len(notes), 1)
+            self.assertIn("'use_legacy_landlock' is deprecated in this Codex CLI", notes[0])
+            gone = agents.make("gone", {"kind": "codex", "extra_args": ["--enable", "old_thing", "--enable", "use_legacy_landlock"]})
+            self.assertIn("'old_thing' is removed", gone.preflight(self.root, {}, True)[0][0])
+            n = len(calls)
+            full = agents.make("full", {"kind": "codex", "sandbox": "danger-full-access"})
+            self.assertEqual(full.preflight(self.root, {}, False), ([], ""))
+            self.assertEqual(len(calls), n)                     # no sandbox to check: nothing run
+            self.assertEqual(agents.make("c", {"kind": "codex", "extra_args": ["-c", "features.apps=true", "--enable=apps"]}).enabled_features(), ["apps", "apps"])
+
     def test_ignore_config_is_explicit(self):
         for kind, flag in (("codex", "--ignore-user-config"), ("claude", "--setting-sources")):
             a = agents.make(kind, {"kind": kind, "ignore_user_config": True})

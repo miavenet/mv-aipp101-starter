@@ -136,6 +136,40 @@ print(json.dumps({'value':p.get('value','I did it')}))
             self.assertEqual(cli.main(['doctor', wf.workflow_file]), 0)
         self.assertIn('observed activity: none; the work tree has no .claude/settings.json', out.getvalue())
 
+    def test_a_failed_codex_preflight_skips_the_model_probes_and_names_the_cause(self):
+        """pre: a Codex profile whose sandbox cannot start is not probed with a model (PRE-09)"""
+        wf = self.workflow(kind='codex')
+        self.commit()
+        cause = "the Codex sandbox cannot start on this host: bwrap: No permissions to create a new namespace"
+        with patch.object(agents.CodexAgent, 'preflight', return_value=([], cause)), \
+             patch.object(agents.CodexAgent, 'run', side_effect=AssertionError('a model was called')):
+            report = qualification.check_workflow(wf)
+        entry = next(iter(report['profiles'].values()))
+        self.assertEqual(entry['capabilities'], [])
+        self.assertEqual(entry['probes']['sandbox']['error'], cause)
+        self.assertEqual(entry['probes']['answer']['status'], agents.ENVIRONMENT)
+        self.assertEqual(entry['spend']['unpriced']['calls'], 0)
+        self.assertTrue(any(cause in p for p in report['problems']), report['problems'])
+
+    def test_doctor_prints_the_preflight_notes(self):
+        wf = self.workflow(kind='codex')
+        self.commit()
+        note = "feature 'use_legacy_landlock' is deprecated in this Codex CLI"
+        import contextlib
+        import io
+        from taskrunner import cli
+
+        class Scripted(agents.CommandAgent):
+            def preflight(self, cwd, env, read_only, timeout_s=60):
+                return [note], ""
+        out = io.StringIO()
+        with patch.dict(agents.REGISTRY, codex=Scripted), contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(['doctor', wf.workflow_file]), 0)
+        self.assertIn('  note: ' + note, out.getvalue())
+        with patch.dict(agents.REGISTRY, codex=Scripted), contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(['doctor', wf.workflow_file]), 0)   # cached: the note is kept
+        self.assertEqual(out.getvalue().count('  note: ' + note), 2)
+
     def test_check_workflow_survives_malformed_project_hook_settings(self):
         wf = self.workflow(kind='claude')
         os.makedirs(os.path.join(self.root, '.claude'), exist_ok=True)

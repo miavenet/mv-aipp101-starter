@@ -285,6 +285,8 @@ def cmd_doctor(args):
             print("  observed activity: none; " + entry["activity_cause"]["message"])
         else:
             print("  observed activity: none; check hook configuration/trust and stdout.log")
+        for note in entry.get("notes", []):
+            print("  note: " + note)
         if entry["orphan_detection"].startswith("weaker"):
             print("warning: orphan detection is weaker on this host")
     print("qualification: " + os.path.join(record.runs_dir_for(gitops.Git(wf.root).top), "qualification.json"))

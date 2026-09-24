@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import subprocess
 
 from . import proc, record, validate, activity
 
@@ -469,6 +470,59 @@ class CodexAgent(HeadlessAgent):
         if session_id:
             argv.append(session_id)
         return argv + ["-"]
+
+    def enabled_features(self):
+        """Feature names the profile switches on (`--enable NAME`, `-c features.NAME=true`)."""
+        args = list(self.profile.get("extra_args", []))
+        names = []
+        for i, arg in enumerate(args):
+            if arg == "--enable" and i + 1 < len(args):
+                names.append(args[i + 1])
+            elif arg.startswith("--enable="):
+                names.append(arg.split("=", 1)[1])
+            elif arg == "-c" and i + 1 < len(args):
+                m = re.fullmatch(r"features\.([\w-]+)\s*=\s*true", args[i + 1].strip())
+                if m:
+                    names.append(m.group(1))
+        return names
+
+    def preflight(self, cwd, env, read_only, timeout_s=60):
+        """Free checks before any model call. Returns (notes, error): `error` names why no call
+        of this profile can work (the Linux sandbox cannot start), `notes` name what the owner
+        should know (an enabled feature the CLI has deprecated or removed)."""
+        notes, error = [], ""
+        sandbox = "read-only" if read_only else self.profile.get("sandbox", "workspace-write")
+        if sandbox != "danger-full-access":
+            argv = self.executable() + ["sandbox"] + list(self.profile.get("extra_args", [])) + ["--", "true"]
+            try:
+                res = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, timeout=timeout_s)
+                if res.returncode != 0:
+                    said = (res.stderr or res.stdout).decode("utf-8", errors="replace").strip()
+                    line = (environment_error(said, startup_only=True) or (said.splitlines() or [""])[-1]
+                            or f"exited with status {res.returncode}")
+                    error = "the Codex sandbox cannot start on this host: " + line[:500]
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                error = f"the Codex sandbox could not be checked: {exc}"
+        wanted = self.enabled_features()
+        if wanted:
+            status = {}
+            try:
+                out = subprocess.run(self.executable() + ["features", "list"], cwd=cwd, env=env,
+                                     capture_output=True, timeout=timeout_s).stdout.decode("utf-8", errors="replace")
+                for line in out.splitlines():
+                    m = re.match(r"^(\S+)\s+(.*?)\s+(true|false)\s*$", line)
+                    if m:
+                        status[m.group(1)] = m.group(2).strip()
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            for name in wanted:
+                state = status.get(name)
+                if state in ("deprecated", "removed"):
+                    notes.append(f"feature '{name}' is {state} in this Codex CLI"
+                                 + (": the profile depends on it, so the next CLI may need a different sandbox "
+                                    "(unprivileged user namespaces for bwrap) or another agent" if state == "deprecated"
+                                    else ": the profile's --enable has no effect"))
+        return notes, error
 
     def interpret(self, res):
         parser = CodexEvents()

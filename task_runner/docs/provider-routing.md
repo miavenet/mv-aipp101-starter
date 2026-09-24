@@ -101,6 +101,31 @@ stable native near-limit signal has been established in this environment, so hea
 remains unknown until such telemetry is integrated. Automatic context sizing and dynamic
 complexity classification are also outside this policy.
 
+## The Codex sandbox on a container host
+
+Codex runs the model's commands inside a Linux sandbox. Since CLI 0.155 that sandbox is
+`bwrap`, which needs unprivileged user namespaces; a Docker or linuxkit container usually
+does not allow them, and every call fails at once with `bwrap: No permissions to create a
+new namespace`. The older Landlock sandbox still works there but is behind a feature the CLI
+marks **deprecated**:
+
+```toml
+[agents.astra]
+kind = "codex"
+model = "gpt-6-astra"
+sandbox = "read-only"
+ignore_user_config = true
+extra_args = ["--enable", "use_legacy_landlock", "-c", 'model_reasoning_effort="high"']
+```
+
+`doctor` checks the sandbox for free before it spends a probe (`codex sandbox -- true`) and
+reports a profile whose enabled feature the installed CLI marks deprecated or removed as a
+`note:` under that profile (PRE-09). When a CLI removes `use_legacy_landlock`, the choices
+on such a host are: run the container with unprivileged user namespaces (Docker: a seccomp
+profile that allows `clone` with `CLONE_NEWUSER`, or `--privileged`), or give the reviewer
+role to a Claude profile. `sandbox = "danger-full-access"` needs no sandbox but is never used
+for a reviewer: the runner passes `read-only` for every review call.
+
 ## Visibility and recovery
 
 `runner status` shows each selected profile/model, complexity and selection reason.

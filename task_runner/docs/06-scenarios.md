@@ -265,6 +265,7 @@ workflow runs.
 | PRE-06 | a profile has only `answer` and the workflow sets `review_mode = "provided_context"` **(A5)** | the review runs with a complete evidence bundle and is labelled text-only in the record; if the evidence exceeds the context budget it fails instead of running on part of it | `pre: text-only review is explicit` |
 | PRE-07 | `doctor` ran before with the same binary version, profile hash, host and capabilities **(A5)** | the cached qualification is used and no model is called; `--force` repeats it | `pre: qualification is cached` |
 | PRE-08 | a run meets an environment failure on a profile whose qualification was cached **(B5)** | the cached entry is discarded, so the next `doctor` or `start` qualifies again | `pre: a failed environment is re-qualified` |
+| PRE-09 | a Codex profile is qualified on a host where the Linux sandbox cannot start (bwrap needs unprivileged user namespaces), or its `extra_args` enable a feature the installed CLI marks deprecated or removed | `doctor` checks both for free (`codex sandbox -- true`, `codex features list`) before any model call: a sandbox that cannot start names the cause and no probe is paid for; a deprecated or removed feature is a `note:` line under the profile, kept with the cached entry | `agent: codex preflight`, `pre: a failed codex preflight` |
 
 ## Crash recovery (REC) — all (A2)
 

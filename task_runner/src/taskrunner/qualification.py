@@ -145,6 +145,13 @@ def qualify(name, metadata, directory, timeout_s=60, budget_usd=1):
             if passed:
                 capabilities.append(cap)
 
+        notes = []
+        if hasattr(agent, 'preflight'):                                 # PRE-09: free, before any model call
+            notes, error = agent.preflight(tmp, agents.agent_env(os.environ, 'doctor', name), read_only,
+                                           timeout_s=timeout_s)
+            if error:
+                unavailable = agents.ENVIRONMENT, error
+                probes['sandbox'] = {'passed': False, 'status': agents.ENVIRONMENT, 'error': error}
         nonce = secrets.token_hex(24)
         first, value = call('answer', 'Return exactly the value below. Remember it for a later turn.', value=nonce)
         observe('answer', first, value == nonce)
@@ -186,7 +193,7 @@ def qualify(name, metadata, directory, timeout_s=60, budget_usd=1):
                        for inv in Path(directory).glob('invocation-*')
                        for row in activity.read_events(inv / 'hooks', 1000)})
     result = {'capabilities': capabilities, 'probes': probes, 'spend': spend, 'metadata': metadata,
-              'observed_activity': observed,
+              'observed_activity': observed, 'notes': notes,
               'directory': directory, 'orphan_detection': 'strong' if platform.system() == 'Linux' else 'weaker (ps fallback)'}
     if profile['kind'] == 'claude' and not observed:
         cause, message = activity.diagnose_claude_silence(metadata['root'])

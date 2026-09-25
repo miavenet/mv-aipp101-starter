@@ -708,7 +708,7 @@ class Run:
         with self._status_lock:
             self._write(os.path.join(self.path, "STATUS.md"),
                         render_run_status(info, self.state, branch_disposition(info, self.state),
-                                          run_path=self.path))
+                                          run_path=self.path, alive=self.runner_alive()))
         for task_id in self.state["order"]:
             tdir = self.task_dir(task_id)
             ledger = self.state["tasks"][task_id].get("ledger")
@@ -721,6 +721,13 @@ class Run:
             self._write(os.path.join(dirpath, "index.json"),
                         dump_json(render_index(self.path, dirpath)).decode("utf-8"))
 
+    def runner_alive(self):
+        """Is a runner working on this run right now: the runs directory's lock names this run and
+        the process it names is alive. Read by the status page, which otherwise cannot tell an
+        operation in flight from one a dead runner left behind (both are open intents)."""
+        holder = Lock(os.path.dirname(os.path.dirname(self.path))).holder() or {}
+        return holder.get("run_id") == self.info.get("run_id") and is_alive(holder.get("process"))
+
     def refresh_status(self, now=None):
         """The heartbeat: rewrite the run's STATUS.md alone, with the age of what is in flight.
         Nothing changes in the state while one long agent call runs, so without this the file
@@ -728,7 +735,8 @@ class Run:
         render (the engine may be changing the state under us) just skips the beat."""
         now = now or datetime.datetime.now(datetime.timezone.utc)
         try:
-            text = render_run_status(self.info, self.state, None, now=now, run_path=self.path)
+            text = render_run_status(self.info, self.state, None, now=now, run_path=self.path,
+                                     alive=self.runner_alive())
         except Exception:                                   # noqa: BLE001 - never hurt the run
             return False
         target = os.path.join(self.path, "STATUS.md")
@@ -1065,7 +1073,10 @@ def _panel_attention(task_id, t, kind):
             f"The rejected answers are summarised in {where}.")
 
 
-def render_run_status(info, state, disposition=None, now=None, run_path=None):
+def render_run_status(info, state, disposition=None, now=None, run_path=None, alive=False):
+    """`alive`: a runner holds this run's lock and is working. Its open operations are then the
+    calls and commands in flight, listed under "In flight", not operations that were interrupted;
+    that line is for a run no runner is working on, where an open intent is one left behind."""
     spend = state["spend"]
     unpriced = spend["unpriced"]
     lines = [f"# {info['workflow']} — run {info['run_id'][:8]} — "
@@ -1120,7 +1131,7 @@ def render_run_status(info, state, disposition=None, now=None, run_path=None):
         lines += flying
     if state.get("stop_reason"):
         attention.append(f"- The run stopped: {state['stop_reason']}")
-    if state["intents"]:
+    if state["intents"] and not (alive and state["status"] == "running"):
         attention.append(f"- {len(state['intents'])} operation(s) were interrupted; "
                          "`runner resume` reconciles them first.")
     if attention:

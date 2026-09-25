@@ -116,7 +116,7 @@ Wherever this runbook says `.runs/`, read: the directory you chose.
 |---|---|
 | A task failed | Its work is in `tasks/NNN-task/failed.patch`, and the tree is back at the last accepted state. Read the last attempt's `gate.log`. `runner retry RUN TASK` to start clean, or `runner retry RUN TASK --apply-patch` to continue from the failed work — a commit of workflow or brief edits made since the set-aside does not prevent this, but an acceptance since does. Then `runner resume RUN` |
 | Environment failure | No producer attempt was used; any reported cost remains in the record. Fix the cause, `runner doctor WORKFLOW --force`, `resume` |
-| The runner was killed | `runner resume`. It reconciles first. If an agent from the dead runner is still alive, it refuses; `resume --stop-orphans` stops it |
+| The runner was killed | `runner status` names the call it left behind as interrupted (while a runner is alive, an open call is listed under "In flight" instead). `runner resume`. It reconciles first. If an agent from the dead runner is still alive, it refuses; `resume --stop-orphans` stops it |
 | Reconciliation error | The message states what was expected and what was found. Restore that, then `resume`. The runner will not guess |
 
 ## 5. Changing the plan mid-run — verified at stage 6

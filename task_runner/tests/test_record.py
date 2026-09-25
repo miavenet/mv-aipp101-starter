@@ -113,6 +113,26 @@ class Heartbeat(RunCase):
         self.run_.regenerate()
         self.assertNotIn("## In flight", self.status())
 
+    def test_a_call_in_flight_under_a_live_runner_is_not_reported_interrupted(self):
+        """rec: an open operation is "interrupted" only when no runner is working on the run"""
+        import datetime
+        self.run_.state["status"] = "running"
+        op = self.run_.begin("agent", task="design", invocation_dir="tasks/010-design/attempt-1/invocation-1")
+        now = datetime.datetime.now(datetime.timezone.utc)
+        lock = record.Lock(os.path.dirname(os.path.dirname(self.run_.path)))
+        lock.acquire(self.run_.info["run_id"])                 # this process is the working runner
+        try:
+            self.run_.regenerate()
+            self.assertIn("## In flight", self.status())
+            self.assertNotIn("were interrupted", self.status())
+            self.assertTrue(self.run_.refresh_status(now=now))
+            self.assertNotIn("were interrupted", self.status())
+        finally:
+            lock.release()
+        self.run_.regenerate()                                  # no runner: the open call was left behind
+        self.assertIn("1 operation(s) were interrupted", self.status())
+        self.run_.finish(op, status="ok")
+
     def test_in_flight_calls_show_the_tokens_used_so_far(self):
         """rec: the heartbeat reads the provider's record for what a running call has used (G4)"""
         import datetime

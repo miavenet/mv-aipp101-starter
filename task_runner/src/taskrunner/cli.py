@@ -382,7 +382,10 @@ def cmd_status(args):
     # A finished run has no runner writing its record, and what became of its branch changes
     # outside the runner (a merge, a push), so its derived files are refreshed on every look.
     finished = run.state["status"] in record.FINISHED_STATUSES
-    if args.rebuild or finished or not os.path.exists(os.path.join(run.path, "STATUS.md")):
+    # An unfinished run with no live runner (killed, or the machine rebooted) has a page that
+    # still shows its last call in flight; regenerating it from outside names what was left behind.
+    if (args.rebuild or finished or not run.runner_alive()
+            or not os.path.exists(os.path.join(run.path, "STATUS.md"))):
         run.regenerate()
     with open(os.path.join(run.path, "STATUS.md"), encoding="utf-8") as fh:
         sys.stdout.write(fh.read())
@@ -491,6 +494,9 @@ def cmd_pause(args):
                         "--now to interrupt the call in flight")
         time.sleep(0.5)
     run = record.Run.load(path)
+    # The runner is gone; its last STATUS.md still shows its call as in flight. Rewrite the page
+    # from outside, where an open intent is one left behind, so it says so before the resume.
+    run.regenerate()
     print(f"run {run.name}: {how}; {run.state['status']}"
           + (f" ({run.state['stop_reason']})" if run.state.get("stop_reason") else ""), file=sys.stderr)
     print(f"Continue with: runner resume {run.name}", file=sys.stderr)
